@@ -222,7 +222,7 @@ class ConversionTechnology(Technology):
         # UB: Maximum fraction of final demand that a conversion tech may supply
         optimization_setup.parameters.add_parameter(
             name="demand_share_max_by_tech",
-            index_names=["set_output_carriers", "set_conversion_technologies", "set_nodes", "set_time_steps_yearly"],
+            index_names=["set_conversion_technologies", "set_output_carriers", "set_nodes", "set_time_steps_yearly"],
             doc="Max yearly share of a carrier’s final demand that a given conversion technology may cover.",
             calling_class=cls
         )
@@ -230,7 +230,7 @@ class ConversionTechnology(Technology):
         # UB: Minimum fraction of final demand that a conversion tech must supply
         optimization_setup.parameters.add_parameter(
             name="demand_share_min_by_tech",
-            index_names=["set_output_carriers", "set_conversion_technologies", "set_nodes", "set_time_steps_yearly"],
+            index_names=["set_conversion_technologies", "set_output_carriers", "set_nodes", "set_time_steps_yearly"],
             doc="Min yearly share of a carrier’s final demand that a given conversion technology must cover.",
             calling_class=cls
         )
