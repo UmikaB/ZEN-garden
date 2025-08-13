@@ -201,31 +201,42 @@ class ConversionTechnology(Technology):
     # UB (got error raise NotImplementedError when adding constraints)
     @classmethod
     def create_custom_set(cls, index_names, optimization_setup):
+        special_axes = {
+            "set_time_steps_operation",
+            "set_time_steps_yearly",
+            "set_capex_linear",
+            "set_dependent_carriers",
+            "set_output_carriers",
+        }
+
         indexers = []
         for name in index_names:
-            if name in ("set_time_steps_operation", "set_time_steps_yearly",
-                        "set_dependent_carriers", "set_output_carriers"):
+            # handle special axes or anything not yet defined
+            if name in special_axes:
                 indexers.append(slice(None))
                 continue
 
-            # Get the raw index values from the optimization_setup
-            set_data = optimization_setup.sets[name]
+            # try to fetch the set data if it exists
+            try:
+                set_data = optimization_setup.sets[name]
+            except KeyError:
+                # not defined? select all
+                indexers.append(slice(None))
+                continue
 
-            # If this set is already a pandas Index, just use it directly
+            # pass plain Index directly; wrap complex ones via ZenIndex
             if isinstance(set_data, pd.Index) and not isinstance(set_data, pd.MultiIndex):
                 indexers.append(set_data)
                 continue
 
-            # Otherwise, wrap it in ZenIndex
             try:
                 zi = ZenIndex(name, optimization_setup)
                 indexers.append(zi.index)
-            except TypeError:
-                # Fallback: use all values if construction fails
+            except Exception:
+                # ultimate fallback: select all
                 indexers.append(slice(None))
 
         return indexers, index_names
-
     @classmethod
     def construct_params(cls, optimization_setup):
         """ constructs the pe.Params of the class <ConversionTechnology>
