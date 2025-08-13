@@ -201,26 +201,28 @@ class ConversionTechnology(Technology):
     # UB (got error raise NotImplementedError when adding constraints)
     @classmethod
     def create_custom_set(cls, index_names, optimization_setup):
-        """
-        Build a list of indexers (one per MultiIndex level) that pandas can use to
-        subselect parameter Series. The order MUST match index_names.
-        """
         indexers = []
         for name in index_names:
-            # Keep full time levels; they are expanded/handled elsewhere
-            if name in ("set_time_steps_operation", "set_time_steps_yearly"):
+            if name in ("set_time_steps_operation", "set_time_steps_yearly",
+                        "set_dependent_carriers", "set_output_carriers"):
                 indexers.append(slice(None))
                 continue
 
-            # These carrier sets are already keyed by the technology; select all by default
-            if name in ("set_dependent_carriers", "set_output_carriers"):
-                indexers.append(slice(None))
+            # Get the raw index values from the optimization_setup
+            set_data = optimization_setup.sets[name]
+
+            # If this set is already a pandas Index, just use it directly
+            if isinstance(set_data, pd.Index) and not isinstance(set_data, pd.MultiIndex):
+                indexers.append(set_data)
                 continue
 
-            # For all other named sets, use the ZenIndex helper to fetch the level index
-            zi = ZenIndex(name, optimization_setup)
-            # IMPORTANT: pass the *Index* (not the object) so pandas recognizes it as a level selector
-            indexers.append(zi.index)
+            # Otherwise, wrap it in ZenIndex
+            try:
+                zi = ZenIndex(name, optimization_setup)
+                indexers.append(zi.index)
+            except TypeError:
+                # Fallback: use all values if construction fails
+                indexers.append(slice(None))
 
         return indexers, index_names
 
