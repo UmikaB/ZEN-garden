@@ -61,8 +61,29 @@ class ConversionTechnology(Technology):
         self.min_full_load_hours_fraction = self.data_input.extract_input_data("min_full_load_hours_fraction", index_sets=["set_nodes", "set_time_steps_yearly"], time_steps="set_time_steps_yearly", unit_category={})
 
         self.convert_to_fraction_of_capex()
+        # UB: got an error that capex_capacity_existing is missing
+        # self.convert_to_fraction_of_capex()
+        # UB min max share constraint variable. use CVS, or if CVS is missing attribute in json
+        tmp_max = self.data_input.extract_input_data(
+            "demand_share_max_by_tech",
+            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+            time_steps="set_time_steps_yearly",
+            unit_category={},
+        ).rename({"set_carriers": "set_output_carriers"})
 
-    def get_conversion_factor(self):
+        tmp_min = self.data_input.extract_input_data(
+            "demand_share_min_by_tech",
+            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+            time_steps="set_time_steps_yearly",
+            unit_category={},
+        ).rename({"set_carriers": "set_output_carriers"})
+
+        self.demand_share_max_by_tech = tmp_max
+        self.demand_share_min_by_tech = tmp_min
+
+
+
+def get_conversion_factor(self):
         """retrieves and stores conversion_factor """
         # df_input_linear, has_unit_linear = self.data_input.read_pwa_files("conversion_factor")
         dependent_carrier = list(set(self.input_carrier + self.output_carrier).difference(
@@ -194,7 +215,21 @@ class ConversionTechnology(Technology):
         # minimum annual average capacity factor
         optimization_setup.parameters.add_parameter(name="min_full_load_hours_fraction", index_names=["set_conversion_technologies", "set_nodes", "set_time_steps_yearly"],
             doc="Minimum full load hours as a fraction of the total hours per planning period", calling_class=cls)
-            
+        #UB: Maximum fraction of final demand that a conversion tech may supply
+        optimization_setup.parameters.add_parameter(
+            name="demand_share_max_by_tech",
+            index_names=["set_output_carriers", "set_conversion_technologies", "set_nodes", "set_time_steps_yearly"],
+            doc="Max yearly share of a carrier’s final demand that a given conversion technology may cover.",
+            calling_class=cls,
+        )
+        #UB:  Minimum fraction of final demand that a conversion tech must supply
+        optimization_setup.parameters.add_parameter(
+            name="demand_share_min_by_tech",
+            index_names=["set_output_carriers", "set_conversion_technologies", "set_nodes", "set_time_steps_yearly"],
+            doc="Min yearly share of a carrier’s final demand that a given conversion technology must cover.",
+            calling_class=cls,
+        )
+
         # add params of the child classes
         for subclass in cls.__subclasses__():
             if np.size(optimization_setup.system[subclass.label]):
@@ -301,7 +336,10 @@ class ConversionTechnology(Technology):
             if np.size(optimization_setup.system[subclass.label]):
                 subclass.construct_constraints(optimization_setup)
 
-    @classmethod
+        rules.constraint_tech_share_of_final_demand_yearly()  # UB for min_max constraints
+
+
+@classmethod
     def calculate_capex_pwa_breakpoints_values(cls, optimization_setup, set_pwa):
         """ calculates the breakpoints and function values for piecewise affine constraint
 
@@ -594,5 +632,65 @@ class ConversionTechnologyRules(GenericRule):
         constraints = lhs == rhs
 
         self.constraints.add_constraint("constraint_carrier_conversion", constraints)
+
+    #UB constrain yearly shares of technology
+    def constraint_tech_share_of_final_demand_yearly(self):
+        r"""
+        Tech-specific yearly share constraints for meeting final demand.
+
+        Indices: c output carrier, i conversion tech, n node, t operation step, y year.
+
+        Max-share:
+            \sum_t G^{out}_{c,i,n,t,y} \, \Delta t_t  <=  \alpha^{max}_{c,i,n,y} \, \sum_t D_{c,n,t,y} \, \Delta t_t
+
+        Min-share:
+            \sum_t G^{out}_{c,i,n,t,y} \, \Delta t_t  >=  \alpha^{min}_{c,i,n,y} \, \sum_t D_{c,n,t,y} \, \Delta t_t
+
+        G^{out} is `flow_conversion_output`, D is final `demand`.
+        """
+
+        # durations: (set_time_steps_yearly, set_time_steps_operation)
+        times = self.get_year_time_step_duration_array()
+
+        # Tech output by *output* carrier:
+        # (set_output_carriers, set_conversion_technologies, set_nodes, set_time_steps_operation)
+        g_out = self.variables["flow_conversion_output"]
+
+        # Expand to include yearly index and weight by duration
+        g_out_y = g_out.broadcast_like(times) * times
+
+        # Sum over operation steps -> (c_out, i, n, y)
+        lhs_energy_by_tech = g_out_y.sum(["set_time_steps_operation"])
+
+        # Final demand for same carriers: (set_output_carriers, set_nodes, set_time_steps_operation)
+        demand = self.parameters.demand.sel({"set_carriers": self.sets["set_output_carriers"]})
+        demand_y = demand.broadcast_like(times) * times
+        total_demand = demand_y.sum(["set_time_steps_operation"])  # (c_out, n, y)
+
+        # MAX share
+        if hasattr(self.parameters, "demand_share_max_by_tech"):
+            alpha_max = self.parameters.demand_share_max_by_tech  # (c_out, i, n, y)
+            # Active where finite and where yearly demand is nonzero (avoid 0·inf edge cases)
+            active_max = np.isfinite(alpha_max) & (total_demand.broadcast_like(alpha_max) > 0)
+            rhs_max = (alpha_max * total_demand).broadcast_like(lhs_energy_by_tech)
+
+            lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
+            rhs_max = self.align_and_mask(rhs_max, active_max)
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
+            )
+
+        # ---------- MIN share ----------
+        if hasattr(self.parameters, "demand_share_min_by_tech"):
+            alpha_min = self.parameters.demand_share_min_by_tech  # (c_out, i, n, y)
+            active_min = (alpha_min > 0) & (total_demand.broadcast_like(alpha_min) > 0)
+            rhs_min = (alpha_min * total_demand).broadcast_like(lhs_energy_by_tech)
+
+            lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
+            rhs_min = self.align_and_mask(rhs_min, active_min)
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
+            )
+
 
 
