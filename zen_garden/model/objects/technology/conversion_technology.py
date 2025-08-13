@@ -59,6 +59,11 @@ class ConversionTechnology(Technology):
         self.get_conversion_factor()
         self.opex_specific_fixed = self.data_input.extract_input_data("opex_specific_fixed", index_sets=["set_nodes", "set_time_steps_yearly"], time_steps="set_time_steps_yearly", unit_category={"money": 1, "energy_quantity": -1, "time": 1})
         self.min_full_load_hours_fraction = self.data_input.extract_input_data("min_full_load_hours_fraction", index_sets=["set_nodes", "set_time_steps_yearly"], time_steps="set_time_steps_yearly", unit_category={})
+
+
+        #UB
+        # --- UB tech-share attributes (read as carrier,node,year,value) ---
+        # Read against set_carriers, then rename to set_output_carriers (keeps CSV column name 'carrier')
         tmp_max = self.data_input.extract_input_data(
             "demand_share_max_by_tech",
             index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
@@ -72,10 +77,9 @@ class ConversionTechnology(Technology):
             time_steps="set_time_steps_yearly",
             unit_category={},
         ).rename({"set_carriers": "set_output_carriers"})
+
         self.demand_share_max_by_tech = tmp_max
         self.demand_share_min_by_tech = tmp_min
-        assert hasattr(self, "demand_share_max_by_tech"), f"{self.name}: max share missing after extraction"
-        assert hasattr(self, "demand_share_min_by_tech"), f"{self.name}: min share missing after extraction"
 
         self.convert_to_fraction_of_capex()
 
@@ -191,30 +195,6 @@ class ConversionTechnology(Technology):
         optimization_setup.sets.add_set(name="set_dependent_carriers", data=dependent_carriers,
                                         doc="set of carriers that are an output to a specific conversion technology. Indexed by set_conversion_technologies",
                                         index_set="set_conversion_technologies")
-
-        # UB: output carriers of technology
-        optimization_setup.sets.add_set(
-            name="set_output_carriers",
-            data=output_carriers,
-            doc="Set of carriers that are an output to a specific conversion technology. Indexed by set_conversion_technologies",
-            index_set="set_conversion_technologies"
-        )
-
-        # UB: dependent carriers of technology
-        optimization_setup.sets.add_set(
-            name="set_dependent_carriers",
-            data=dependent_carriers,
-            doc="Set of carriers that are an output to a specific conversion technology. Indexed by set_conversion_technologies",
-            index_set="set_conversion_technologies"
-        )
-
-        # UB add a flat (non-dependent) set of all output carriers across all technologies
-        all_output_carriers = sorted({c for carriers in output_carriers.values() for c in carriers})
-        optimization_setup.sets.add_set(
-            name="set_output_carriers_flat",
-            data=all_output_carriers,
-            doc="All carriers that appear as an output of any conversion technology (flat, non-dependent).",
-        )
 
         # add sets of the child classes
         for subclass in cls.__subclasses__():
@@ -650,5 +630,66 @@ class ConversionTechnologyRules(GenericRule):
         constraints = lhs == rhs
 
         self.constraints.add_constraint("constraint_carrier_conversion", constraints)
+
+
+    #UB constrain yearly shares of technology
+    def constraint_tech_share_of_final_demand_yearly(self):
+        r"""
+        Tech-specific yearly share constraints for meeting final demand.
+
+        Indices: c output carrier, i conversion tech, n node, t operation step, y year.
+
+        Max-share:
+            \sum_t G^{out}_{c,i,n,t,y} \, \Delta t_t  <=  \alpha^{max}_{c,i,n,y} \, \sum_t D_{c,n,t,y} \, \Delta t_t
+
+        Min-share:
+            \sum_t G^{out}_{c,i,n,t,y} \, \Delta t_t  >=  \alpha^{min}_{c,i,n,y} \, \sum_t D_{c,n,t,y} \, \Delta t_t
+
+        G^{out} is `flow_conversion_output`, D is final `demand`.
+        """
+
+        # durations: (set_time_steps_yearly, set_time_steps_operation)
+        times = self.get_year_time_step_duration_array()
+
+        # Tech output by *output* carrier:
+        # (set_output_carriers, set_conversion_technologies, set_nodes, set_time_steps_operation)
+        g_out = self.variables["flow_conversion_output"]
+
+        # Expand to include yearly index and weight by duration
+        g_out_y = g_out.broadcast_like(times) * times
+
+        # Sum over operation steps -> (c_out, i, n, y)
+        lhs_energy_by_tech = g_out_y.sum(["set_time_steps_operation"])
+
+        # Final demand for same carriers: (set_output_carriers, set_nodes, set_time_steps_operation)
+        demand = self.parameters.demand.sel({"set_carriers": self.sets["set_output_carriers"]})
+        demand_y = demand.broadcast_like(times) * times
+        total_demand = demand_y.sum(["set_time_steps_operation"])  # (c_out, n, y)
+
+        # MAX share
+        if hasattr(self.parameters, "demand_share_max_by_tech"):
+            alpha_max = self.parameters.demand_share_max_by_tech  # (c_out, i, n, y)
+            # Active where finite and where yearly demand is nonzero (avoid 0·inf edge cases)
+            active_max = np.isfinite(alpha_max) & (total_demand.broadcast_like(alpha_max) > 0)
+            rhs_max = (alpha_max * total_demand).broadcast_like(lhs_energy_by_tech)
+
+            lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
+            rhs_max = self.align_and_mask(rhs_max, active_max)
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
+            )
+
+        # ---------- MIN share ----------
+        if hasattr(self.parameters, "demand_share_min_by_tech"):
+            alpha_min = self.parameters.demand_share_min_by_tech  # (c_out, i, n, y)
+            active_min = (alpha_min > 0) & (total_demand.broadcast_like(alpha_min) > 0)
+            rhs_min = (alpha_min * total_demand).broadcast_like(lhs_energy_by_tech)
+
+            lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
+            rhs_min = self.align_and_mask(rhs_min, active_min)
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
+            )
+
 
 
