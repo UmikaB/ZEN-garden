@@ -199,6 +199,18 @@ class ConversionTechnology(Technology):
                 subclass.construct_sets(optimization_setup)
 
     @classmethod
+    def create_custom_set(cls, index_names, optimization_setup):
+        """
+        Build any class-specific index sets needed for parameters of ConversionTechnology.
+        Return (custom_set_dict, normalized_index_names_list).
+        """
+        # Create ZenIndex objects for each requested index name.
+        # This covers both global sets (e.g. set_nodes) and the class-specific ones
+        # you add in construct_sets (set_output_carriers, set_dependent_carriers).
+        custom_set = {name: ZenIndex(name, optimization_setup) for name in index_names}
+        return custom_set, index_names
+
+    @classmethod
     def construct_params(cls, optimization_setup):
         """ constructs the pe.Params of the class <ConversionTechnology>
 
