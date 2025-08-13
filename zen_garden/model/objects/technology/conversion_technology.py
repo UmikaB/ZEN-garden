@@ -191,6 +191,14 @@ class ConversionTechnology(Technology):
             index_set="set_conversion_technologies"
         )
 
+        # UB add a flat (non-dependent) set of all output carriers across all technologies
+        all_output_carriers = sorted({c for carriers in output_carriers.values() for c in carriers})
+        optimization_setup.sets.add_set(
+            name="set_output_carriers_flat",
+            data=all_output_carriers,
+            doc="All carriers that appear as an output of any conversion technology (flat, non-dependent).",
+        )
+
         # add sets of the child classes
         for subclass in cls.__subclasses__():
             if np.size(optimization_setup.system[subclass.label]):
