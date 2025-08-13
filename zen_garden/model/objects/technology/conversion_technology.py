@@ -59,6 +59,23 @@ class ConversionTechnology(Technology):
         self.get_conversion_factor()
         self.opex_specific_fixed = self.data_input.extract_input_data("opex_specific_fixed", index_sets=["set_nodes", "set_time_steps_yearly"], time_steps="set_time_steps_yearly", unit_category={"money": 1, "energy_quantity": -1, "time": 1})
         self.min_full_load_hours_fraction = self.data_input.extract_input_data("min_full_load_hours_fraction", index_sets=["set_nodes", "set_time_steps_yearly"], time_steps="set_time_steps_yearly", unit_category={})
+        tmp_max = self.data_input.extract_input_data(
+            "demand_share_max_by_tech",
+            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+            time_steps="set_time_steps_yearly",
+            unit_category={},
+        ).rename({"set_carriers": "set_output_carriers"})
+
+        tmp_min = self.data_input.extract_input_data(
+            "demand_share_min_by_tech",
+            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+            time_steps="set_time_steps_yearly",
+            unit_category={},
+        ).rename({"set_carriers": "set_output_carriers"})
+        self.demand_share_max_by_tech = tmp_max
+        self.demand_share_min_by_tech = tmp_min
+        assert hasattr(self, "demand_share_max_by_tech"), f"{self.name}: max share missing after extraction"
+        assert hasattr(self, "demand_share_min_by_tech"), f"{self.name}: min share missing after extraction"
 
         self.convert_to_fraction_of_capex()
 
