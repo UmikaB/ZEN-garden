@@ -202,10 +202,27 @@ class ConversionTechnology(Technology):
     @classmethod
     def create_custom_set(cls, index_names, optimization_setup):
         """
-        ConversionTechnology does not need any custom/computed index objects for its params.
-        All referenced index names are standard sets already registered on optimization_setup.
+        Build a list of indexers (one per MultiIndex level) that pandas can use to
+        subselect parameter Series. The order MUST match index_names.
         """
-        return {}, index_names
+        indexers = []
+        for name in index_names:
+            # Keep full time levels; they are expanded/handled elsewhere
+            if name in ("set_time_steps_operation", "set_time_steps_yearly"):
+                indexers.append(slice(None))
+                continue
+
+            # These carrier sets are already keyed by the technology; select all by default
+            if name in ("set_dependent_carriers", "set_output_carriers"):
+                indexers.append(slice(None))
+                continue
+
+            # For all other named sets, use the ZenIndex helper to fetch the level index
+            zi = ZenIndex(name, optimization_setup)
+            # IMPORTANT: pass the *Index* (not the object) so pandas recognizes it as a level selector
+            indexers.append(zi.index)
+
+        return indexers, index_names
 
     @classmethod
     def construct_params(cls, optimization_setup):
