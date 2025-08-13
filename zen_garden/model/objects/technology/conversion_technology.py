@@ -198,17 +198,14 @@ class ConversionTechnology(Technology):
             if np.size(optimization_setup.system[subclass.label]):
                 subclass.construct_sets(optimization_setup)
 
+    # UB (got error raise NotImplementedError when adding constraints)
     @classmethod
     def create_custom_set(cls, index_names, optimization_setup):
         """
-        Build any class-specific index sets needed for parameters of ConversionTechnology.
-        Return (custom_set_dict, normalized_index_names_list).
+        ConversionTechnology does not need any custom/computed index objects for its params.
+        All referenced index names are standard sets already registered on optimization_setup.
         """
-        # Create ZenIndex objects for each requested index name.
-        # This covers both global sets (e.g. set_nodes) and the class-specific ones
-        # you add in construct_sets (set_output_carriers, set_dependent_carriers).
-        custom_set = {name: ZenIndex(name, optimization_setup) for name in index_names}
-        return custom_set, index_names
+        return {}, index_names
 
     @classmethod
     def construct_params(cls, optimization_setup):
