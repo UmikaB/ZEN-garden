@@ -633,7 +633,10 @@ class Postprocess:
                 units.index.names = index.names
                 return units
             else:
-                raise AssertionError("The length of the units does not match the length of the index")
+                if units.index.intersection(index).sort_values().equals(index.sort_values()):
+                    return units.loc[index]
+                else:
+                    raise AssertionError("The length of the units does not match the length of the index")
         else:
             return None
 
