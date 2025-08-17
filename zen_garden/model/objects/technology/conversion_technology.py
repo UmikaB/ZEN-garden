@@ -740,61 +740,53 @@ class ConversionTechnologyRules(GenericRule):
 
     def constraint_tech_share_of_inflow_yearly(self):
         r"""
-        Tech-specific yearly share constraints for **input** carrier use.
-
-        Let G_in(i,c_in,n,t,y) be input flow to tech i of carrier c_in.
-        Define yearly energy by tech:  Σ_t G_in Δt
-        Define total yearly use of c_in at node n:  Σ_i Σ_t G_in Δt
+        Tech-specific yearly share constraints for input carrier use.
 
         Max:
-            Σ_t G_in(i,c,n,t,y) Δt ≤ β_max(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt
-
+            Σ_t G_in(i,c,n,t,y) Δt_t ≤ β_max(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
         Min:
-            Σ_t G_in(i,c,n,t,y) Δt ≥ β_min(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt
-
-        Notes:
-        - Constraints are active only where total yearly use of (c,n,y) > 0.
-        - Remains linear since β are parameters and RHS is a constant times a sum of variables.
+            Σ_t G_in(i,c,n,t,y) Δt_t ≥ β_min(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
         """
 
+        # Year/time weighting (dims: set_time_steps_yearly × set_time_steps_operation)
+        times = self.get_year_time_step_duration_array()
 
+        # Input flow variable (dims: i, c_in, n, t_op)
+        g_in = self.variables["flow_conversion_input"]
 
-        # --- 1) yearly inflow per tech (same shape you use for outflow_y) ---
-        # Do this exactly like you do for outflow:
-        # If your outflow code does: outflow_y = self.variables.flow_out.groupby("y").sum("time")
-        # then copy it and replace flow_out -> flow_in.
-        flow_in = self.variables.flow_in  # dims: (i, c_in, n, time) in your model
-        inflow_y = flow_in.groupby("y").sum("time")  # <- use the same grouping you use for outflow
+        # Yearly energy by tech (dims: i, c_in, n, y)
+        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation")
 
-        # Total inflow across techs for each (c_in, n, y)
-        total_inflow_y = inflow_y.sum(dim="i")
+        # Total yearly inflow across technologies (dims: c_in, n, y)
+        total_inflow_y = inflow_y.sum("set_conversion_technologies")
 
-        # --- 2) MAX share: inflow(i,c_in,n,y) <= beta_max(i,...) * total_inflow(c_in,n,y) ---
+        # ---------- MAX share ----------
         if hasattr(self.parameters, "inflow_share_max_by_tech"):
-            beta_max = self.parameters.inflow_share_max_by_tech  # dims: (i, c_in, n, y)
-            # broadcast total to same dims as beta
+            beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
             total_inflow_y_max = total_inflow_y.broadcast_like(beta_max)
 
-            # IMPORTANT: mask only on parameters (avoid > on expressions)
+            # Mask only on parameter validity to avoid boolean ops on LinearExpressions
             active_max = np.isfinite(beta_max)
 
-            self.model.add_constraints(
-                inflow_y.where(active_max)
-                <= (beta_max * total_inflow_y_max).where(active_max),
-                name="share_inflow_max",
+            lhs_max = self.align_and_mask(inflow_y, active_max)
+            rhs_max = self.align_and_mask(beta_max * total_inflow_y_max, active_max)
+
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_inflow_yearly_max", lhs_max <= rhs_max
             )
 
-        # --- 3) MIN share: inflow(i,c_in,n,y) >= beta_min(i,...) * total_inflow(c_in,n,y) ---
+        # ---------- MIN share ----------
         if hasattr(self.parameters, "inflow_share_min_by_tech"):
-            beta_min = self.parameters.inflow_share_min_by_tech
+            beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
             total_inflow_y_min = total_inflow_y.broadcast_like(beta_min)
 
-            # Again: mask only on params to avoid boolean with Constraints
+            # Enforce only where a strictly positive min share is specified
             active_min = (beta_min > 0)
 
-            self.model.add_constraints(
-                inflow_y.where(active_min)
-                >= (beta_min * total_inflow_y_min).where(active_min),
-                name="share_inflow_min",
+            lhs_min = self.align_and_mask(inflow_y, active_min)
+            rhs_min = self.align_and_mask(beta_min * total_inflow_y_min, active_min)
+
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_inflow_yearly_min", lhs_min >= rhs_min
             )
 
