@@ -759,7 +759,6 @@ class ConversionTechnologyRules(GenericRule):
 
 
 
-
         # --- 1) yearly inflow per tech (same shape you use for outflow_y) ---
         # Do this exactly like you do for outflow:
         # If your outflow code does: outflow_y = self.variables.flow_out.groupby("y").sum("time")
@@ -798,3 +797,4 @@ class ConversionTechnologyRules(GenericRule):
                 >= (beta_min * total_inflow_y_min).where(active_min),
                 name="share_inflow_min",
             )
+
