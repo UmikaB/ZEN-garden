@@ -748,45 +748,49 @@ class ConversionTechnologyRules(GenericRule):
             Σ_t G_in(i,c,n,t,y) Δt_t ≥ β_min(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
         """
 
-        # Year/time weighting (dims: set_time_steps_yearly × set_time_steps_operation)
-        times = self.get_year_time_step_duration_array()
 
-        # Input flow variable (dims: i, c_in, n, t_op)
-        g_in = self.variables["flow_conversion_input"]
+        # durations per operation step, mapped to yearly index
+        times = self.get_year_time_step_duration_array()  # (set_time_steps_yearly, set_time_steps_operation)
 
-        # Yearly energy by tech (dims: i, c_in, n, y)
-        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation")
+        # Inflow variable and yearly totals (energy)
+        g_in = self.variables["flow_conversion_input"]  # (i, c_in, n, t_op)
+        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation")  # (i, c_in, n, y)
+        total_inflow_y = inflow_y.sum("set_conversion_technologies")  # (c_in, n, y)
 
-        # Total yearly inflow across technologies (dims: c_in, n, y)
-        total_inflow_y = inflow_y.sum("set_conversion_technologies")
-
-        # ---------- MAX share ----------
+        # ---------- MAX share: inflow_y <= β_max * total_inflow_y ----------
         if hasattr(self.parameters, "inflow_share_max_by_tech"):
             beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
-            total_inflow_y_max = total_inflow_y.broadcast_like(beta_max)
 
-            # Mask only on parameter validity to avoid boolean ops on LinearExpressions
-            active_max = np.isfinite(beta_max)
+            # broadcast totals to β dims
+            total_b = total_inflow_y.broadcast_like(beta_max)
+            inflow_b = inflow_y.broadcast_like(beta_max)
 
-            lhs_max = self.align_and_mask(inflow_y, active_max)
-            rhs_max = self.align_and_mask(beta_max * total_inflow_y_max, active_max)
+            # parameter-only mask (do NOT use > with expressions)
+            active = np.isfinite(beta_max)
 
-            self.constraints.add_constraint(
-                "constraint_tech_share_of_inflow_yearly_max", lhs_max <= rhs_max
+            # put all variable terms on LHS and compare to 0
+            lhs = lp.merge(
+                [inflow_b, -(beta_max * total_b)],
+                compat="broadcast_equals",
             )
+            lhs = self.align_and_mask(lhs, active)
+            self.constraints.add_constraint("constraint_tech_share_of_inflow_yearly_max", lhs <= 0)
 
-        # ---------- MIN share ----------
+        # ---------- MIN share: inflow_y >= β_min * total_inflow_y ----------
         if hasattr(self.parameters, "inflow_share_min_by_tech"):
             beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
-            total_inflow_y_min = total_inflow_y.broadcast_like(beta_min)
 
-            # Enforce only where a strictly positive min share is specified
-            active_min = (beta_min > 0)
+            total_b = total_inflow_y.broadcast_like(beta_min)
+            inflow_b = inflow_y.broadcast_like(beta_min)
 
-            lhs_min = self.align_and_mask(inflow_y, active_min)
-            rhs_min = self.align_and_mask(beta_min * total_inflow_y_min, active_min)
+            # only enforce where β_min > 0 (parameter-only mask)
+            active = beta_min > 0
 
-            self.constraints.add_constraint(
-                "constraint_tech_share_of_inflow_yearly_min", lhs_min >= rhs_min
+            # -inflow + β_min*total ≤ 0  ⇔ inflow ≥ β_min*total
+            lhs = lp.merge(
+                [-inflow_b, (beta_min * total_b)],
+                compat="broadcast_equals",
             )
+            lhs = self.align_and_mask(lhs, active)
+            self.constraints.add_constraint("constraint_tech_share_of_inflow_yearly_min", lhs <= 0)
 
