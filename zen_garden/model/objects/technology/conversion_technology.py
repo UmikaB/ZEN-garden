@@ -776,7 +776,7 @@ class ConversionTechnologyRules(GenericRule):
             total_inflow_y_max = total_inflow_y.broadcast_like(beta_max)  # (i, c_in, n, y)
 
             # Active where finite and total>0
-            active_max = np.isfinite(beta_max) & (total_inflow_y_max > 0)
+            active_max = np.isfinite(beta_max) & (total_inflow_y_max >= 0)
 
             rhs_max = beta_max * total_inflow_y_max  # pure xarray
 
@@ -793,7 +793,7 @@ class ConversionTechnologyRules(GenericRule):
 
             total_inflow_y_min = total_inflow_y.broadcast_like(beta_min)
             # Only enforce where positive min share and there is positive total inflow
-            active_min = (beta_min > 0) & (total_inflow_y_min > 0)
+            active_min = np.isfinite(beta_min) & (total_inflow_y_min >= 0)
 
             rhs_min = beta_min * total_inflow_y_min
 
