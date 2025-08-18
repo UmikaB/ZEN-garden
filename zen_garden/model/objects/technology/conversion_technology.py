@@ -84,22 +84,22 @@ class ConversionTechnology(Technology):
         #self.demand_share_min_by_tech.attrs["units"] = "1"
 
         #UB inflow share limits
-        #tmp_in_max = self.data_input.extract_input_data(
-           # "inflow_share_max_by_tech",
-          #  index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
-           # time_steps="set_time_steps_yearly",
-           # unit_category={},
-      #  ).rename({"set_carriers": "set_input_carriers"})
+        tmp_in_max = self.data_input.extract_input_data(
+            "inflow_share_max_by_tech",
+            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+            time_steps="set_time_steps_yearly",
+            unit_category={},
+        ).rename({"set_carriers": "set_input_carriers"})
 
-       # tmp_in_min = self.data_input.extract_input_data(
-          #  "inflow_share_min_by_tech",
-           # index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
-           # time_steps="set_time_steps_yearly",
-            #unit_category={},
-       # ).rename({"set_carriers": "set_input_carriers"})
+        tmp_in_min = self.data_input.extract_input_data(
+            "inflow_share_min_by_tech",
+            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+            time_steps="set_time_steps_yearly",
+            unit_category={},
+        ).rename({"set_carriers": "set_input_carriers"})
 
-        #self.inflow_share_max_by_tech = tmp_in_max
-        #self.inflow_share_min_by_tech = tmp_in_min
+        self.inflow_share_max_by_tech = tmp_in_max
+        self.inflow_share_min_by_tech = tmp_in_min
 
         self.convert_to_fraction_of_capex()
 
@@ -255,20 +255,20 @@ class ConversionTechnology(Technology):
         )
 
         # UB: Max fraction of an input carrier a conversion tech may consume
-        #optimization_setup.parameters.add_parameter(
-          #  name="inflow_share_max_by_tech",
-           # index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
-            #doc="Max yearly share of an input carrier that a given conversion technology may consume.",
-           # calling_class=cls
-       # )
+        optimization_setup.parameters.add_parameter(
+            name="inflow_share_max_by_tech",
+            index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
+            doc="Max yearly share of an input carrier that a given conversion technology may consume.",
+            calling_class=cls
+        )
 
         # UB: Min fraction of an input carrier a conversion tech must consume
-        #optimization_setup.parameters.add_parameter(
-           # name="inflow_share_min_by_tech",
-           # index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
-            #doc="Min yearly share of an input carrier that a given conversion technology must consume.",
-            #calling_class=cls
-        #)
+        optimization_setup.parameters.add_parameter(
+            name="inflow_share_min_by_tech",
+            index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
+            doc="Min yearly share of an input carrier that a given conversion technology must consume.",
+            calling_class=cls
+        )
 
         # add params of the child classes
         for subclass in cls.__subclasses__():
@@ -359,7 +359,7 @@ class ConversionTechnology(Technology):
         #UB
         #rules.constraint_tech_share_of_final_demand_yearly()
         #UB
-       # rules.constraint_tech_share_of_inflow_yearly()
+        rules.constraint_tech_share_of_inflow_yearly()
 
         # capex
         set_pwa_capex = cls.create_custom_set(["set_conversion_technologies", "set_capex_pwa", "set_nodes", "set_time_steps_yearly"], optimization_setup)
@@ -676,7 +676,7 @@ class ConversionTechnologyRules(GenericRule):
 
 
     #UB constrain yearly shares of technology
-    #def constraint_tech_share_of_final_demand_yearly(self):
+    def constraint_tech_share_of_final_demand_yearly(self):
         r"""
         Tech-specific yearly share constraints for meeting final demand.
 
@@ -686,59 +686,59 @@ class ConversionTechnologyRules(GenericRule):
             Σ_t G_out(c,i,n,t,y) Δt_t ≥ α_min(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
         """
         # durations: (set_time_steps_yearly, set_time_steps_operation)
-        #times = self.get_year_time_step_duration_array()
+        times = self.get_year_time_step_duration_array()
 
         # Tech output (linopy var): (i, c_out, n, t_op)
-        #g_out = self.variables["flow_conversion_output"]
+        g_out = self.variables["flow_conversion_output"]
 
         # LHS energy by tech/year: (i, c_out, n, y)
-        #lhs_energy_by_tech = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")
+        lhs_energy_by_tech = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")
 
         # Final demand: start from pure xarray, rename carrier dim to match output-carrier
-        #demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
+        demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
         # Align demand’s coords to g_out (adds dims but still a DataArray)
-        #demand = align_like(demand, g_out, astype=float)
+        demand = align_like(demand, g_out, astype=float)
         # Yearly demand (still pure xarray): (i, c_out, n, y) but independent of i
-        #total_demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")
+        total_demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")
 
         #  MAX share
-        #if hasattr(self.parameters, "demand_share_max_by_tech"):
-            #alpha_max = self.parameters.demand_share_max_by_tech  # DataArray (i, c_out, n, y)
+        if hasattr(self.parameters, "demand_share_max_by_tech"):
+            alpha_max = self.parameters.demand_share_max_by_tech  # DataArray (i, c_out, n, y)
 
             # Broadcast total_demand_y to alpha_max (pure xarray-to-xarray)
-           # total_demand_y_max = total_demand_y.broadcast_like(alpha_max)
+            total_demand_y_max = total_demand_y.broadcast_like(alpha_max)
 
             # Active where finite and demand>0
-            #active_max = np.isfinite(alpha_max) & (total_demand_y_max > 0)
+            active_max = np.isfinite(alpha_max) & (total_demand_y_max > 0)
 
             # RHS is pure xarray; DO NOT broadcast_like(lhs_energy_by_tech)!
-            #rhs_max = alpha_max * total_demand_y_max  # (i, c_out, n, y)
+            rhs_max = alpha_max * total_demand_y_max  # (i, c_out, n, y)
 
-            # Now align/mask both sides with your helper (handles LinearExpression on LHS)
-           # lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
-            #rhs_max = self.align_and_mask(rhs_max, active_max)
+            #  align/mask both sides  helper (handles LinearExpression on LHS)
+            lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
+            rhs_max = self.align_and_mask(rhs_max, active_max)
 
-            #self.constraints.add_constraint(
-                #"constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
-            #)
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
+            )
 
         # MIN share
-       # if hasattr(self.parameters, "demand_share_min_by_tech"):
-            #alpha_min = self.parameters.demand_share_min_by_tech  # DataArray (i, c_out, n, y)
+        if hasattr(self.parameters, "demand_share_min_by_tech"):
+            alpha_min = self.parameters.demand_share_min_by_tech  # DataArray (i, c_out, n, y)
 
-            #total_demand_y_min = total_demand_y.broadcast_like(alpha_min)
-            #active_min = (alpha_min > 0) & (total_demand_y_min > 0)
-            #rhs_min = alpha_min * total_demand_y_min
+            total_demand_y_min = total_demand_y.broadcast_like(alpha_min)
+            active_min = (alpha_min > 0) & (total_demand_y_min > 0)
+            rhs_min = alpha_min * total_demand_y_min
 
-            #lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
-            #rhs_min = self.align_and_mask(rhs_min, active_min)
+            lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
+            rhs_min = self.align_and_mask(rhs_min, active_min)
 
-            #self.constraints.add_constraint(
-                #"constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
-           # )
+            self.constraints.add_constraint(
+                "constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
+            )
     #UB inflow constraint
 
-    #def constraint_tech_share_of_inflow_yearly(self):
+    def constraint_tech_share_of_inflow_yearly(self):
         r"""
         Tech-specific yearly share constraints for input carrier use.
 
@@ -749,47 +749,49 @@ class ConversionTechnologyRules(GenericRule):
         """
 
         # durations per operation step, mapped to yearly index
-        #times = self.get_year_time_step_duration_array()  # (set_time_steps_yearly, set_time_steps_operation)
+        times = self.get_year_time_step_duration_array()  # (set_time_steps_yearly, set_time_steps_operation)
 
         # Inflow variable and yearly totals (energy)
-       # g_in = self.variables["flow_conversion_input"]  # (i, c_in, n, t_op)
-       #inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation")  # (i, c_in, n, y)
-        #total_inflow_y = inflow_y.sum("set_conversion_technologies")  # (c_in, n, y)
+        g_in = self.variables["flow_conversion_input"]  # (i, c_in, n, t_op)
+        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation")  # (i, c_in, n, y)
+        total_inflow_y = inflow_y.sum("set_conversion_technologies")  #NOW OVER ALL CONVERSION TECHS instead of sector dependent# (c_in, n, y)
 
-        # ---------- MAX share: inflow_y <= β_max * total_inflow_y ----------
-       # if hasattr(self.parameters, "inflow_share_max_by_tech"):
-            #beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
 
+        #  MAX share: inflow_y <= β_max * total_inflow_y #NEWVERSION
+        if hasattr(self.parameters, "inflow_share_max_by_tech"):
+            beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
+            # beta_max = beta_max.broadcast_like(total_inflow_y.const)
             # broadcast totals to β dims
-            #total_b = total_inflow_y.broadcast_like(beta_max)
-           # inflow_b = inflow_y.broadcast_like(beta_max)
+            # total_b = total_inflow_y.broadcast_like(beta_max)
+            # inflow_b = inflow_y.broadcast_like(beta_max)
 
-            # parameter-only mask (do NOT use > with expressions)
-            #active = np.isfinite(beta_max)
+            # parameter-only mask
+            active = np.isfinite(beta_max)
 
-            # put all variable terms on LHS and compare to 0
-            #lhs = lp.merge(
-               # [inflow_b, -(beta_max * total_b)],
-               # compat="broadcast_equals",
-            #)
-           # lhs = self.align_and_mask(lhs, active)
-           # self.constraints.add_constraint("constraint_tech_share_of_inflow_yearly_max", lhs <= 0)
+            #lp.merge creates an extra '_term' dimension??
+            # lhs = lp.merge(
+            #     [inflow_b, -(beta_max * total_b)],
+            #     compat="broadcast_equals",
+            # )
+            lhs = (inflow_y - beta_max*total_inflow_y).where(active)
+            # lhs = self.align_and_mask(lhs, active)
+            self.constraints.add_constraint("constraint_tech_share_of_inflow_yearly_max", lhs <= 0)
 
-        # ---------- MIN share: inflow_y >= β_min * total_inflow_y ----------
-        #if hasattr(self.parameters, "inflow_share_min_by_tech"):
-            #beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
+        #  MIN: inflow_y >= beta_min * total_inflow_y -
 
-            #total_b = total_inflow_y.broadcast_like(beta_min)
+           # beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
+           # total_b = total_inflow_y.broadcast_like(beta_min)
            # inflow_b = inflow_y.broadcast_like(beta_min)
 
-            # only enforce where β_min > 0 (parameter-only mask)
-            #active = beta_min > 0
+            #creates term???
+           # lhs = lp.merge(
+             #   [-(inflow_b), (beta_min * total_b)],
+              #  compat="broadcast_equals",
+           # )
 
-            # -inflow + β_min*total ≤ 0  ⇔ inflow ≥ β_min*total
-            #lhs = lp.merge(
-               # [-inflow_b, (beta_min * total_b)],
-               # compat="broadcast_equals",
-            #)
-            #lhs = self.align_and_mask(lhs, active)
+            #
+            #lhs = self.align_and_mask(lhs, active_min)
             #self.constraints.add_constraint("constraint_tech_share_of_inflow_yearly_min", lhs <= 0)
+
+
 
