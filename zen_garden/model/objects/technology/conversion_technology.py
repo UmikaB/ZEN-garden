@@ -748,7 +748,6 @@ class ConversionTechnologyRules(GenericRule):
             Σ_t G_in(i,c,n,t,y) Δt_t ≥ β_min(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
         """
 
-
         # durations per operation step, mapped to yearly index
         times = self.get_year_time_step_duration_array()  # (set_time_steps_yearly, set_time_steps_operation)
 
