@@ -676,7 +676,7 @@ class ConversionTechnologyRules(GenericRule):
 
 
     #UB constrain yearly shares of technology
-    def constraint_tech_share_of_final_demand_yearly(self):
+    #def constraint_tech_share_of_final_demand_yearly(self):
         r"""
         Tech-specific yearly share constraints for meeting final demand.
 
@@ -686,56 +686,56 @@ class ConversionTechnologyRules(GenericRule):
             Σ_t G_out(c,i,n,t,y) Δt_t ≥ α_min(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
         """
         # durations: (set_time_steps_yearly, set_time_steps_operation)
-        times = self.get_year_time_step_duration_array()
+        #times = self.get_year_time_step_duration_array()
 
         # Tech output (linopy var): (i, c_out, n, t_op)
-        g_out = self.variables["flow_conversion_output"]
+        #g_out = self.variables["flow_conversion_output"]
 
         # LHS energy by tech/year: (i, c_out, n, y)
-        lhs_energy_by_tech = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")
+        #lhs_energy_by_tech = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")
 
         # Final demand: start from pure xarray, rename carrier dim to match output-carrier
-        demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
+        #demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
         # Align demand’s coords to g_out (adds dims but still a DataArray)
-        demand = align_like(demand, g_out, astype=float)
+        #demand = align_like(demand, g_out, astype=float)
         # Yearly demand (still pure xarray): (i, c_out, n, y) but independent of i
-        total_demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")
+        #total_demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")
 
         #  MAX share
-        if hasattr(self.parameters, "demand_share_max_by_tech"):
-            alpha_max = self.parameters.demand_share_max_by_tech  # DataArray (i, c_out, n, y)
+        #if hasattr(self.parameters, "demand_share_max_by_tech"):
+            #alpha_max = self.parameters.demand_share_max_by_tech  # DataArray (i, c_out, n, y)
 
             # Broadcast total_demand_y to alpha_max (pure xarray-to-xarray)
-            total_demand_y_max = total_demand_y.broadcast_like(alpha_max)
+           # total_demand_y_max = total_demand_y.broadcast_like(alpha_max)
 
             # Active where finite and demand>0
-            active_max = np.isfinite(alpha_max) & (total_demand_y_max > 0)
+            #active_max = np.isfinite(alpha_max) & (total_demand_y_max > 0)
 
             # RHS is pure xarray; DO NOT broadcast_like(lhs_energy_by_tech)!
-            rhs_max = alpha_max * total_demand_y_max  # (i, c_out, n, y)
+            #rhs_max = alpha_max * total_demand_y_max  # (i, c_out, n, y)
 
             # Now align/mask both sides with your helper (handles LinearExpression on LHS)
-            lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
-            rhs_max = self.align_and_mask(rhs_max, active_max)
+           # lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
+            #rhs_max = self.align_and_mask(rhs_max, active_max)
 
-            self.constraints.add_constraint(
-                "constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
-            )
+            #self.constraints.add_constraint(
+                #"constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
+            #)
 
         # MIN share
-        if hasattr(self.parameters, "demand_share_min_by_tech"):
-            alpha_min = self.parameters.demand_share_min_by_tech  # DataArray (i, c_out, n, y)
+       # if hasattr(self.parameters, "demand_share_min_by_tech"):
+            #alpha_min = self.parameters.demand_share_min_by_tech  # DataArray (i, c_out, n, y)
 
-            total_demand_y_min = total_demand_y.broadcast_like(alpha_min)
-            active_min = (alpha_min > 0) & (total_demand_y_min > 0)
-            rhs_min = alpha_min * total_demand_y_min
+            #total_demand_y_min = total_demand_y.broadcast_like(alpha_min)
+            #active_min = (alpha_min > 0) & (total_demand_y_min > 0)
+            #rhs_min = alpha_min * total_demand_y_min
 
-            lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
-            rhs_min = self.align_and_mask(rhs_min, active_min)
+            #lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
+            #rhs_min = self.align_and_mask(rhs_min, active_min)
 
-            self.constraints.add_constraint(
-                "constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
-            )
+            #self.constraints.add_constraint(
+                #"constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
+           # )
     #UB inflow constraint
 
     #def constraint_tech_share_of_inflow_yearly(self):
