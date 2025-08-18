@@ -685,59 +685,142 @@ class ConversionTechnologyRules(GenericRule):
         Min:
             Σ_t G_out(c,i,n,t,y) Δt_t ≥ α_min(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
         """
+        # durations per operation-step, mapped to yearly index
+        times = self.get_year_time_step_duration_array()  # (set_time_steps_yearly, set_time_steps_operation)
+
+        # Tech output variable and yearly output flow by tech
+        g_out = self.variables["flow_conversion_output"]  # (i, c_out, n, t_op)
+        out_y = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")  # (i, c_out, n, y)
+
+        # final demand → rename carrier dim to match output-carrier
+        demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
+        # yearly demand totals; keep independent of technology
+        demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")  # (c_out, n, y)
+
+        # MAX: out_y(i,c,n,y) ≤ α_max(i,c,n,y) · demand_y(c,n,y)
+        if hasattr(self.parameters, "demand_share_max_by_tech"):
+            alpha_max = self.parameters.demand_share_max_by_tech  # (i, c_out, n, y)
+            # for each output carrier, check if there is any finite (binding) max share across techs/nodes/years
+            reduce_dims_c = tuple(d for d in alpha_max.dims if d != "set_output_carriers")  # collapse all but carrier
+            c_mask = np.isfinite(alpha_max).any(dim=reduce_dims_c)  # True if any finite α_max exists
+            # active carriers. Keep only carriers where c_mask is True
+            active_carriers = alpha_max["set_output_carriers"].where(c_mask, drop=True).values
+
+            # for each active carrier, iterate only technologies that have a finite max share somewhere
+            for c in active_carriers:
+                a_c = alpha_max.sel(set_output_carriers=c)  # (i, n, y)
+                total_c = demand_y.sel(set_output_carriers=c)  # (n, y) total demand for this carrier
+
+                # techs that have a finite max for this carrier somewhere (across nodes/years)
+                reduce_dims_i = tuple(d for d in a_c.dims if d != "set_conversion_technologies")
+                i_mask = np.isfinite(a_c).any(dim=reduce_dims_i)
+                # active technologies for this carrier
+                active_techs = a_c["set_conversion_technologies"].where(i_mask, drop=True).values
+
+                # iterate only over techs that have a finite value
+                for i in active_techs:
+                    a = a_c.sel(set_conversion_technologies=i)  # (n, y) α_max(i,c,·,·)
+                    lhs = out_y.sel(set_conversion_technologies=i, set_output_carriers=c)  # (n, y) G_out(i,c,·,y)
+
+                    # only enforce where parameter is valid and demand > 0 (avoid 0·∞ or useless rows)
+                    mask = np.isfinite(a) & (total_c > 0)
+
+                    # keep entries only where the parameter binds
+                    lhs_m = lhs.where(mask)
+                    rhs_m = (a * total_c).where(mask)
+
+                    # one constraint per (tech, carrier)
+                    self.constraints.add_constraint(f"constraint_max_demand_{i}_{c}", lhs_m <= rhs_m)
+
+        #  MIN: out_y(i,c,n,y) ≥ α_min(i,c,n,y) · demand_y(c,n,y)
+        if hasattr(self.parameters, "demand_share_min_by_tech"):
+            alpha_min = self.parameters.demand_share_min_by_tech  # (i, c_out, n, y)
+
+            # for each output carrier, check if there is any finite AND positive min share across techs/nodes/years
+            reduce_dims_c = tuple(d for d in alpha_min.dims if d != "set_output_carriers")
+            c_mask = (np.isfinite(alpha_min) & (alpha_min > 0)).any(dim=reduce_dims_c)
+            # active carriers. Keep only carriers where c_mask is True
+            active_carriers = alpha_min["set_output_carriers"].where(c_mask, drop=True).values
+
+            # for each active carrier, iterate only technologies that have a binding (>0) min share somewhere
+            for c in active_carriers:
+                a_c = alpha_min.sel(set_output_carriers=c)  # (i, n, y)
+                total_c = demand_y.sel(set_output_carriers=c)  # (n, y)
+
+                reduce_dims_i = tuple(d for d in a_c.dims if d != "set_conversion_technologies")
+                i_mask = (np.isfinite(a_c) & (a_c > 0)).any(dim=reduce_dims_i)
+                # active technologies for this carrier
+                active_techs = a_c["set_conversion_technologies"].where(i_mask, drop=True).values
+
+                # iterate only over techs that have a positive finite min
+                for i in active_techs:
+                    a = a_c.sel(set_conversion_technologies=i)  # (n, y) α_min(i,c,·,·)
+                    lhs = out_y.sel(set_conversion_technologies=i, set_output_carriers=c)  # (n, y) G_out(i,c,·,y)
+
+                    # write as ≤ 0 and mask where it binds
+                    mask = np.isfinite(a) & (a > 0) & (total_c > 0)
+                    # (lhs - a*total_c) ≥ 0  ⇔  -(lhs - a*total_c) ≤ 0
+                    expr = -(lhs - a * total_c).where(mask)  # keep only binding entries
+
+                    # one constraint per (tech, carrier)
+                    self.constraints.add_constraint(f"constraint_min_demand_{i}_{c}", expr <= 0)
+
+        #OLD
+
         # durations: (set_time_steps_yearly, set_time_steps_operation)
-        times = self.get_year_time_step_duration_array()
+       # times = self.get_year_time_step_duration_array()
 
         # Tech output (linopy var): (i, c_out, n, t_op)
-        g_out = self.variables["flow_conversion_output"]
+        #g_out = self.variables["flow_conversion_output"]
 
         # LHS energy by tech/year: (i, c_out, n, y)
-        lhs_energy_by_tech = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")
+       # lhs_energy_by_tech = (g_out.broadcast_like(times) * times).sum("set_time_steps_operation")
 
         # Final demand: start from pure xarray, rename carrier dim to match output-carrier
-        demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
+        #demand = self.parameters.demand.rename({"set_carriers": "set_output_carriers"})
         # Align demand’s coords to g_out (adds dims but still a DataArray)
-        demand = align_like(demand, g_out, astype=float)
+       # demand = align_like(demand, g_out, astype=float)
         # Yearly demand (still pure xarray): (i, c_out, n, y) but independent of i
-        total_demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")
+        #total_demand_y = (demand.broadcast_like(times) * times).sum("set_time_steps_operation")
 
         #  MAX share
-        if hasattr(self.parameters, "demand_share_max_by_tech"):
-            alpha_max = self.parameters.demand_share_max_by_tech  # DataArray (i, c_out, n, y)
+       # if hasattr(self.parameters, "demand_share_max_by_tech"):
+            #alpha_max = self.parameters.demand_share_max_by_tech  # DataArray (i, c_out, n, y)
 
             # Broadcast total_demand_y to alpha_max (pure xarray-to-xarray)
-            total_demand_y_max = total_demand_y.broadcast_like(alpha_max)
+            #total_demand_y_max = total_demand_y.broadcast_like(alpha_max)
 
             # Active where finite and demand>0
-            active_max = np.isfinite(alpha_max) & (total_demand_y_max > 0)
+            #active_max = np.isfinite(alpha_max) & (total_demand_y_max > 0)
 
             # RHS is pure xarray; DO NOT broadcast_like(lhs_energy_by_tech)!
-            rhs_max = alpha_max * total_demand_y_max  # (i, c_out, n, y)
+            #rhs_max = alpha_max * total_demand_y_max  # (i, c_out, n, y)
 
             #  align/mask both sides  helper (handles LinearExpression on LHS)
-            lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
-            rhs_max = self.align_and_mask(rhs_max, active_max)
+            #lhs_max = self.align_and_mask(lhs_energy_by_tech, active_max)
+            #rhs_max = self.align_and_mask(rhs_max, active_max)
 
-            self.constraints.add_constraint(
-                "constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
-            )
+            #self.constraints.add_constraint(
+                #"constraint_tech_share_of_final_demand_yearly_max", lhs_max <= rhs_max
+           # )
 
         # MIN share
-        if hasattr(self.parameters, "demand_share_min_by_tech"):
-            alpha_min = self.parameters.demand_share_min_by_tech  # DataArray (i, c_out, n, y)
+        #if hasattr(self.parameters, "demand_share_min_by_tech"):
+           # alpha_min = self.parameters.demand_share_min_by_tech  # DataArray (i, c_out, n, y)
 
-            total_demand_y_min = total_demand_y.broadcast_like(alpha_min)
-            active_min = (alpha_min > 0) & (total_demand_y_min > 0)
-            rhs_min = alpha_min * total_demand_y_min
+          #  total_demand_y_min = total_demand_y.broadcast_like(alpha_min)
+          #  active_min = (alpha_min > 0) & (total_demand_y_min > 0)
+           # rhs_min = alpha_min * total_demand_y_min
 
-            lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
-            rhs_min = self.align_and_mask(rhs_min, active_min)
+           # lhs_min = self.align_and_mask(lhs_energy_by_tech, active_min)
+            #rhs_min = self.align_and_mask(rhs_min, active_min)
 
-            self.constraints.add_constraint(
-                "constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
-            )
+            #self.constraints.add_constraint(
+                #"constraint_tech_share_of_final_demand_yearly_min", lhs_min >= rhs_min
+            #)
+
+
     #UB inflow constraint
-
 
     def constraint_tech_share_of_inflow_yearly(self):
         r"""
@@ -758,7 +841,7 @@ class ConversionTechnologyRules(GenericRule):
         total_inflow_y = inflow_y.sum("set_conversion_technologies")  # (c_in, n, y)
 
 
-        #  MAX share: inflow_y <= β_max * total_inflow_y #NEWVERSION
+        #  MAX share: inflow_y <= β_max * total_inflow_y #NEWVERSION to deduct memory use
         if hasattr(self.parameters, "inflow_share_max_by_tech"):
             beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
 
@@ -794,6 +877,48 @@ class ConversionTechnologyRules(GenericRule):
 
                     self.constraints.add_constraint(f"constraint_max_inflow_{i}_{c}", lhs <= 0)
                     #keep lhs entries only where the parameter is finite.
+
+            #  MIN share: inflow_y >= β_min * total_inflow_y
+            if hasattr(self.parameters, "inflow_share_min_by_tech"):
+                beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
+
+                # for each input carrier, check if there is any finite-and-positive (binding) min share across techs/nodes/years
+                reduce_dims_c = tuple(d for d in beta_min.dims if
+                                      d != "set_input_carriers")  # mask that tells per carrier whether there exist any finite-and-positive share values in beta_min
+                c_mask = (np.isfinite(beta_min) & (beta_min > 0)).any(
+                    dim=reduce_dims_c)  # any(dim=reduce_dims_c) collapses everything except the carrier dimension → boolean with True (min share binds somewhere) / False
+                # active carriers. Keep only carriers where c_mask is True
+                active_carriers = beta_min["set_input_carriers"].where(c_mask, drop=True).values
+
+                # for each active carrier, operate only where beta_min can bind
+                for c in active_carriers:
+                    beta_c = beta_min.sel(set_input_carriers=c)  # from (i, c_in, n, y) to (i, n, y)
+
+                    # mask that tells per technology whether there exist any finite-and-positive min share values
+                    reduce_dims_i = tuple(d for d in beta_c.dims if d != "set_conversion_technologies")
+                    i_mask = (np.isfinite(beta_c) & (beta_c > 0)).any(
+                        dim=reduce_dims_i)  # True if tech i has a binding β_min somewhere over (n, y)
+
+                    # active technologies for this carrier
+                    active_techs = beta_c["set_conversion_technologies"].where(i_mask, drop=True).values
+
+                    # total inflow for this carrier, per node/year
+                    total_c = total_inflow_y.sel(set_input_carriers=c)  # (n, y)
+
+                    # iterate only over techs that have a finite-and-positive β_min somewhere
+                    for i in active_techs:
+                        b = beta_c.sel(
+                            set_conversion_technologies=i)  # (n, y). Slice param to one tech. b[n, y] is the required min share for that tech in each node and year.
+
+                        # Min-share constraint in ≤ 0 form:
+                        # inflow_i,c >= b * total_c   ⇔   -(inflow_i,c - b * total_c) <= 0
+                        lhs = -(inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c)
+
+                        # keep lhs entries only where the parameter is valid (finite and > 0); avoids creating constraints where β_min is NaN/inf/0
+                        lhs = lhs.where(np.isfinite(b) & (b > 0))
+
+                        # add one constraint block per (tech, carrier); internally it expands over (node, year)
+                        self.constraints.add_constraint(f"constraint_min_inflow_{i}_{c}", lhs <= 0)
 
 
 
