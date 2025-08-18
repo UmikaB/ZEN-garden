@@ -738,6 +738,7 @@ class ConversionTechnologyRules(GenericRule):
             )
     #UB inflow constraint
 
+
     def constraint_tech_share_of_inflow_yearly(self):
         r"""
         Tech-specific yearly share constraints for input carrier use.
@@ -760,22 +761,31 @@ class ConversionTechnologyRules(GenericRule):
         #  MAX share: inflow_y <= β_max * total_inflow_y #NEWVERSION
         if hasattr(self.parameters, "inflow_share_max_by_tech"):
             beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
-            # beta_max = beta_max.broadcast_like(total_inflow_y.const)
-            # broadcast totals to β dims
-            # total_b = total_inflow_y.broadcast_like(beta_max)
-            # inflow_b = inflow_y.broadcast_like(beta_max)
 
-            # parameter-only mask
-            active = np.isfinite(beta_max)
+            # carriers that have ANY finite max share somewhere
+            c_mask = beta_max.isfinite().any(("set_conversion_technologies", "set_nodes", "set_time_steps_yearly"))
+            active_carriers = c_mask.where(c_mask, drop=True).set_input_carriers.values
 
-            #lp.merge creates an extra '_term' dimension??
-            # lhs = lp.merge(
-            #     [inflow_b, -(beta_max * total_b)],
-            #     compat="broadcast_equals",
-            # )
-            lhs = (inflow_y - beta_max*total_inflow_y).where(active)
-            # lhs = self.align_and_mask(lhs, active)
-            self.constraints.add_constraint("constraint_tech_share_of_inflow_yearly_max", lhs <= 0)
+            for c in active_carriers:
+                beta_c = beta_max.sel(set_input_carriers=c)  # (i, n, y)
+
+                # techs that have a finite max for this carrier somewhere
+                i_mask = beta_c.isfinite().any(("set_nodes", "set_time_steps_yearly"))
+                active_techs = beta_c.coords["set_conversion_technologies"].where(i_mask, drop=True).values
+
+                total_c = total_inflow_y.sel(set_input_carriers=c)  # (n, y)
+
+                for i in active_techs:
+                    b = beta_c.sel(set_conversion_technologies=i)  # (n, y)
+                    mask = np.isfinite(b)
+
+                    # (inflow - b * total) <= 0, only where b is defined
+                    lhs = (inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c).where(mask,
+                                                                                                                  0)
+
+                    self.constraints.add_constraint(f"constraint_max_inflow_{i}_{c}", lhs <= 0)
+
+
 
         #  MIN: inflow_y >= beta_min * total_inflow_y -
 
