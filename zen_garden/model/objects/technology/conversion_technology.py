@@ -754,36 +754,46 @@ class ConversionTechnologyRules(GenericRule):
 
         # Inflow variable and yearly totals (energy)
         g_in = self.variables["flow_conversion_input"]  # (i, c_in, n, t_op)
-        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation")  # (i, c_in, n, y)
-        total_inflow_y = inflow_y.sum("set_conversion_technologies")  #NOW OVER ALL CONVERSION TECHS instead of sector dependent# (c_in, n, y)
+        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation") #decision variable for input flows per tech, carrier, node, time  # (i, c_in, n, y)
+        total_inflow_y = inflow_y.sum("set_conversion_technologies")  # (c_in, n, y)
 
 
         #  MAX share: inflow_y <= β_max * total_inflow_y #NEWVERSION
         if hasattr(self.parameters, "inflow_share_max_by_tech"):
             beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
 
-            # carriers that have ANY finite max share somewhere
-            c_mask = beta_max.isfinite().any(("set_conversion_technologies", "set_nodes", "set_time_steps_yearly"))
-            active_carriers = c_mask.where(c_mask, drop=True).set_input_carriers.values
+            # for each input carrier, check if there is any finite (binding) max share across techs/nodes/years
+            reduce_dims_c = tuple(d for d in beta_max.dims if d != "set_input_carriers") #mask that tells per carrier whether there exist any finite share values in beta max
+            c_mask = np.isfinite(beta_max).any(dim=reduce_dims_c) #is finite doesnt work  in dataarray --> np.isfinite. any(dim=reduce_dims_c) collapses everything except the carrier dimension --> boolean with true (max share is finite) or false
+            active_carriers = beta_max["set_input_carriers"].where(c_mask, drop=True).values
+            # active carriers. Keep only carriers where c_mask is True
+            active_carriers = beta_max["set_input_carriers"].where(c_mask, drop=True).values
 
+            # for each active carrier, get the maximum share across all technologies/nodes/years
             for c in active_carriers:
-                beta_c = beta_max.sel(set_input_carriers=c)  # (i, n, y)
+                beta_c = beta_max.sel(set_input_carriers=c)  #  from (i, c_in, n, t_y) to (i, n, t_y)
+                # mask that tells per technology and node whether there exist any finite (binding) max share values
+                reduce_dims_i = tuple(d for d in beta_c.dims if d != "set_conversion_technologies")
 
-                # techs that have a finite max for this carrier somewhere
-                i_mask = beta_c.isfinite().any(("set_nodes", "set_time_steps_yearly"))
-                active_techs = beta_c.coords["set_conversion_technologies"].where(i_mask, drop=True).values
+                # techs that have a finite max for this carrier somewhere ( For this carrier, find which technologies have at least one finite beta across nodes/years)
+                i_mask = np.isfinite(beta_c).any(dim=reduce_dims_i) ##(n, t_y)
+                # active technologies for this carrier
+                active_techs = beta_c["set_conversion_technologies"].where(i_mask, drop=True).values
+                #extract lst of techs where i mask is true
+                #total inflow for this carrier, per node/year.
+                total_c = total_inflow_y.sel(set_input_carriers=c)  # (n, t_y)
 
-                total_c = total_inflow_y.sel(set_input_carriers=c)  # (n, y)
-
+                #iterate only over techs that have a finite value
                 for i in active_techs:
-                    b = beta_c.sel(set_conversion_technologies=i)  # (n, y)
-                    mask = np.isfinite(b)
-
+                    b = beta_c.sel(set_conversion_technologies=i)  # (n, t_y). Slice param to one tech. b[n, t_y] is the allowed share for that tech in each node and year.
                     # (inflow - b * total) <= 0, only where b is defined
-                    lhs = (inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c).where(mask,
-                                                                                                                  0)
+                    lhs = inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c
+                    #total_c is the total inflow of this carrier across all techs
+                    #b * total_c gives the maximum allowed inflow for this tech (since inflow ≤ β·total).
+                    #lhs <= 0 is inflow_i, c ≤ β_i, c · total_c
 
                     self.constraints.add_constraint(f"constraint_max_inflow_{i}_{c}", lhs <= 0)
+                    #keep lhs entries only where the parameter is finite.
 
 
 
