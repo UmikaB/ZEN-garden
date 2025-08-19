@@ -357,7 +357,7 @@ class ConversionTechnology(Technology):
         # minimum average annual capacity factor
         rules.constraint_minimum_full_load_hours()
         #UB
-        #rules.constraint_tech_share_of_final_demand_yearly()
+        rules.constraint_tech_share_of_final_demand_yearly()
         #UB
         rules.constraint_tech_share_of_inflow_yearly()
 
@@ -930,7 +930,7 @@ class ConversionTechnologyRules(GenericRule):
                     #lhs <= 0 is inflow_i, c ≤ β_i, c · total_c
 
                     # Nbuild ≤ 0 form only where it binds (finite b and total>0)
-                    mask = np.isfinite(b) & (total_c > 0)
+                    mask = np.isfinite(b)
                     expr = (inflow_ic - b * total_c).where(mask)
                     #  wrap with reduced dims to avoid coord conflicts
                     expr_blk = _as_reduced_block(expr, carrier=c, tech=i)
@@ -974,7 +974,7 @@ class ConversionTechnologyRules(GenericRule):
 
                         # keep lhs entries only where the parameter is valid (finite and > 0); avoids creating constraints where β_min is NaN/inf/0
                         #lhs = lhs.where(np.isfinite(b) & (b > 0))
-                        mask = np.isfinite(b) & (b > 0) & (total_c > 0)
+                        mask = np.isfinite(b) & (b > 0)
                         expr = (-(inflow_ic - b * total_c)).where(mask)
                         #wrap with reduced dims to avoid coord conflicts
                         expr_blk = _as_reduced_block(expr, carrier=c, tech=i)
