@@ -680,35 +680,15 @@ class ConversionTechnologyRules(GenericRule):
         r"""
         Tech-specific yearly share constraints for meeting final demand.
 
-        Max:
-            Σ_t G_out(c,i,n,t,y) Δt_t ≤ α_max(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
-        Min:
-            Σ_t G_out(c,i,n,t,y) Δt_t ≥ α_min(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
+        Max: Σ_t G_out(c,i,n,t,y) Δt_t ≤ α_max(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
+        Min: Σ_t G_out(c,i,n,t,y) Δt_t ≥ α_min(c,i,n,y) · Σ_t D(c,n,t,y) Δt_t
         """
 
-        #  helper to avoid xarray MergeError when collecting duals and  to label blocks with consistent *reduced* dims across all constraints.
-        def _as_reduced_block(arr, *, carrier=None, tech=None,
-                              carrier_dim="set_input_carriers_reduced",
-                              tech_dim="set_conversion_technologies_reduced"):
-            to_drop = [c for c in ("set_input_carriers", "set_output_carriers", "set_conversion_technologies")
-                       if c in arr.coords]  # <-- FIX
-            if to_drop:
-                arr = arr.reset_coords(to_drop, drop=True)
-
-                #  add consistent reduced dims so all blocks share the same dims
-            if carrier is not None:
-                arr = arr.expand_dims({carrier_dim: [carrier]})
-                arr = arr.assign_coords({carrier_dim: [carrier]})
-            else:
-                arr = arr.expand_dims({carrier_dim: ["_all"]})
-                arr = arr.assign_coords({carrier_dim: ["_all"]})
-
-            if tech is not None:
-                arr = arr.expand_dims({tech_dim: [tech]})
-                arr = arr.assign_coords({tech_dim: [tech]})
-            else:
-                arr = arr.expand_dims({tech_dim: ["_all"]})
-                arr = arr.assign_coords({tech_dim: ["_all"]})
+        # helper: drop non-dimension scalar coords that would later clash during dual assembly
+        def _drop_scalar_coord(arr, name):
+            # drop only if it remains as a non-dimension coordinate
+            if (name in arr.coords) and (name not in arr.dims):
+                return arr.reset_coords(name, drop=True)
             return arr
 
         # durations per operation-step, mapped to yearly index
@@ -726,9 +706,11 @@ class ConversionTechnologyRules(GenericRule):
         # MAX: out_y(i,c,n,y) ≤ α_max(i,c,n,y) · demand_y(c,n,y)
         if hasattr(self.parameters, "demand_share_max_by_tech"):
             alpha_max = self.parameters.demand_share_max_by_tech  # (i, c_out, n, y)
+
             # for each output carrier, check if there is any finite (binding) max share across techs/nodes/years
-            reduce_dims_c = tuple(d for d in alpha_max.dims if d != "set_output_carriers")  # collapse all but carrier
+            reduce_dims_c = tuple(d for d in alpha_max.dims if d != "set_output_carriers")
             c_mask = np.isfinite(alpha_max).any(dim=reduce_dims_c)  # True if any finite α_max exists
+
             # active carriers. Keep only carriers where c_mask is True
             active_carriers = alpha_max["set_output_carriers"].where(c_mask, drop=True).values
 
@@ -739,8 +721,7 @@ class ConversionTechnologyRules(GenericRule):
 
                 # techs that have a finite max for this carrier somewhere (across nodes/years)
                 reduce_dims_i = tuple(d for d in a_c.dims if d != "set_conversion_technologies")
-                i_mask = np.isfinite(a_c).any(dim=reduce_dims_i)
-                # active technologies for this carrier
+                i_mask = np.isfinite(a_c).any(dim=reduce_dims_i)  # active technologies for this carrier
                 active_techs = a_c["set_conversion_technologies"].where(i_mask, drop=True).values
 
                 # iterate only over techs that have a finite value
@@ -752,20 +733,24 @@ class ConversionTechnologyRules(GenericRule):
                     mask = np.isfinite(a) & (total_c > 0)
 
                     # keep entries only where the parameter binds
-                    #  wrap both sides with reduced dims + mask → consistent dims across all blocks
-                    lhs_blk = _as_reduced_block(lhs.where(mask), carrier=c, tech=i)
-                    rhs_blk = _as_reduced_block((a * total_c).where(mask), carrier=c, tech=i)
+                    lhs_m = lhs.where(mask)
+                    rhs_m = (a * total_c).where(mask)
+
+                    # drop carried scalar coord to avoid xarray MergeError in dual assembly
+                    lhs_m = _drop_scalar_coord(lhs_m, "set_output_carriers")
+                    rhs_m = _drop_scalar_coord(rhs_m, "set_output_carriers")
 
                     # one constraint per (tech, carrier)
-                    self.constraints.add_constraint(f"constraint_max_demand_{i}_{c}", lhs_blk <= rhs_blk)
+                    self.constraints.add_constraint(f"constraint_max_demand_{i}_{c}", lhs_m <= rhs_m)
 
-        #  MIN: out_y(i,c,n,y) ≥ α_min(i,c,n,y) * demand_y(c,n,y)
+        # MIN: out_y(i,c,n,y) ≥ α_min(i,c,n,y) · demand_y(c,n,y)
         if hasattr(self.parameters, "demand_share_min_by_tech"):
             alpha_min = self.parameters.demand_share_min_by_tech  # (i, c_out, n, y)
 
             # for each output carrier, check if there is any finite AND positive min share across techs/nodes/years
             reduce_dims_c = tuple(d for d in alpha_min.dims if d != "set_output_carriers")
             c_mask = (np.isfinite(alpha_min) & (alpha_min > 0)).any(dim=reduce_dims_c)
+
             # active carriers. Keep only carriers where c_mask is True
             active_carriers = alpha_min["set_output_carriers"].where(c_mask, drop=True).values
 
@@ -775,8 +760,7 @@ class ConversionTechnologyRules(GenericRule):
                 total_c = demand_y.sel(set_output_carriers=c)  # (n, y)
 
                 reduce_dims_i = tuple(d for d in a_c.dims if d != "set_conversion_technologies")
-                i_mask = (np.isfinite(a_c) & (a_c > 0)).any(dim=reduce_dims_i)
-                # active technologies for this carrier
+                i_mask = (np.isfinite(a_c) & (a_c > 0)).any(dim=reduce_dims_i)  # active technologies for this carrier
                 active_techs = a_c["set_conversion_technologies"].where(i_mask, drop=True).values
 
                 # iterate only over techs that have a positive finite min
@@ -786,13 +770,14 @@ class ConversionTechnologyRules(GenericRule):
 
                     # write as ≤ 0 and mask where it binds
                     mask = np.isfinite(a) & (a > 0) & (total_c > 0)
-                    # (lhs - a*total_c) ≥ 0  <-->  -(lhs - a*total_c) ≤ 0
+                    # (lhs - a*total_c) ≥ 0 ⇔ -(lhs - a*total_c) ≤ 0
                     expr = -(lhs - a * total_c).where(mask)  # keep only binding entries
-                    #drop scalar coords before adding
-                    #wrap reduced dims to avoid coord conflicts
-                    expr_blk = _as_reduced_block(expr, carrier=c, tech=i)
+
+                    # drop carried scalar coord to avoid xarray MergeError in dual assembly
+                    expr = _drop_scalar_coord(expr, "set_output_carriers")
+
                     # one constraint per (tech, carrier)
-                    self.constraints.add_constraint(f"constraint_min_demand_{i}_{c}", expr_blk <= 0)
+                    self.constraints.add_constraint(f"constraint_min_demand_{i}_{c}", expr <= 0)
 
         #OLD
 
@@ -851,39 +836,20 @@ class ConversionTechnologyRules(GenericRule):
 
     #UB inflow constraint
 
+    # UB inflow constraint
+
     def constraint_tech_share_of_inflow_yearly(self):
         r"""
         Tech-specific yearly share constraints for input carrier use.
 
-        Max:
-            Σ_t G_in(i,c,n,t,y) Δt_t ≤ β_max(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
-        Min:
-            Σ_t G_in(i,c,n,t,y) Δt_t ≥ β_min(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
+        Max: Σ_t G_in(i,c,n,t,y) Δt_t ≤ β_max(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
+        Min: Σ_t G_in(i,c,n,t,y) Δt_t ≥ β_min(i,c,n,y) · Σ_i Σ_t G_in(i,c,n,t,y) Δt_t
         """
 
-
-        #helper to drop scalar coord to prevent xarray merge conflicts and label with reduced dims
-        def _as_reduced_block(arr, *, carrier=None, tech=None,
-                              carrier_dim="set_output_carriers_reduced",
-                              tech_dim="set_conversion_technologies_reduced"):
-            to_drop = [c for c in ("set_input_carriers", "set_output_carriers", "set_conversion_technologies")
-                       if c in arr.coords]
-            if to_drop:
-                arr = arr.reset_coords(to_drop, drop=True)
-           # add consistent reduced dims
-            if carrier is not None:
-                arr = arr.expand_dims({carrier_dim: [carrier]})
-                arr = arr.assign_coords({carrier_dim: [carrier]})
-            else:
-                arr = arr.expand_dims({carrier_dim: ["_all"]})
-                arr = arr.assign_coords({carrier_dim: ["_all"]})
-
-            if tech is not None:
-                arr = arr.expand_dims({tech_dim: [tech]})
-                arr = arr.assign_coords({tech_dim: [tech]})
-            else:
-                arr = arr.expand_dims({tech_dim: ["_all"]})
-                arr = arr.assign_coords({tech_dim: ["_all"]})
+        # helper: drop non-dimension scalar coords that would later clash during dual assembly
+        def _drop_scalar_coord(arr, name):
+            if (name in arr.coords) and (name not in arr.dims):
+                return arr.reset_coords(name, drop=True)
             return arr
 
         # durations per operation step, mapped to yearly index
@@ -891,97 +857,106 @@ class ConversionTechnologyRules(GenericRule):
 
         # Inflow variable and yearly totals (energy)
         g_in = self.variables["flow_conversion_input"]  # (i, c_in, n, t_op)
-        inflow_y = (g_in.broadcast_like(times) * times).sum("set_time_steps_operation") #decision variable for input flows per tech, carrier, node, time  # (i, c_in, n, y)
+        inflow_y = (g_in.broadcast_like(times) * times).sum(
+            "set_time_steps_operation")  # decision variable for input flows per tech, carrier, node, time
+        # (i, c_in, n, y)
+
         total_inflow_y = inflow_y.sum("set_conversion_technologies")  # (c_in, n, y)
 
-
-        #  MAX share: inflow_y <= β_max * total_inflow_y #NEWVERSION to deduct memory use
+        # MAX share: inflow_y <= β_max * total_inflow_y
+        # NEWVERSION to deduct memory use
         if hasattr(self.parameters, "inflow_share_max_by_tech"):
             beta_max = self.parameters.inflow_share_max_by_tech  # (i, c_in, n, y)
 
             # for each input carrier, check if there is any finite (binding) max share across techs/nodes/years
-            reduce_dims_c = tuple(d for d in beta_max.dims if d != "set_input_carriers") #mask that tells per carrier whether there exist any finite share values in beta max
-            c_mask = np.isfinite(beta_max).any(dim=reduce_dims_c) #is finite doesnt work  in dataarray --> np.isfinite. any(dim=reduce_dims_c) collapses everything except the carrier dimension --> boolean with true (max share is finite) or false
+            reduce_dims_c = tuple(d for d in beta_max.dims if d != "set_input_carriers")
+            # mask that tells per carrier whether there exist any finite share values in beta max
+            c_mask = np.isfinite(beta_max).any(dim=reduce_dims_c)
+            # is finite doesnt work in dataarray --> np.isfinite. any(dim=reduce_dims_c) collapses everything except the carrier dimension --> boolean with true (max share is finite) or false
+
+            active_carriers = beta_max["set_input_carriers"].where(c_mask, drop=True).values
             # active carriers. Keep only carriers where c_mask is True
             active_carriers = beta_max["set_input_carriers"].where(c_mask, drop=True).values
 
             # for each active carrier, get the maximum share across all technologies/nodes/years
             for c in active_carriers:
-                beta_c = beta_max.sel(set_input_carriers=c)  #  from (i, c_in, n, t_y) to (i, n, t_y)
+                beta_c = beta_max.sel(set_input_carriers=c)  # from (i, c_in, n, t_y) to (i, n, t_y)
+
                 # mask that tells per technology and node whether there exist any finite (binding) max share values
                 reduce_dims_i = tuple(d for d in beta_c.dims if d != "set_conversion_technologies")
 
                 # techs that have a finite max for this carrier somewhere ( For this carrier, find which technologies have at least one finite beta across nodes/years)
-                i_mask = np.isfinite(beta_c).any(dim=reduce_dims_i) ##(n, t_y)
+                i_mask = np.isfinite(beta_c).any(dim=reduce_dims_i)  ##(n, t_y)
+
                 # active technologies for this carrier
-                active_techs = beta_c["set_conversion_technologies"].where(i_mask, drop=True).values
-                #extract lst of techs where i mask is true
-                #total inflow for this carrier, per node/year.
+                active_techs = beta_c["set_conversion_technologies"].where(i_mask,
+                                                                           drop=True).values  # extract lst of techs where i mask is true
+
+                # total inflow for this carrier, per node/year.
                 total_c = total_inflow_y.sel(set_input_carriers=c)  # (n, t_y)
 
-                #iterate only over techs that have a finite value
+                # iterate only over techs that have a finite value
                 for i in active_techs:
-                    b = beta_c.sel(set_conversion_technologies=i)  # (n, t_y). Slice param to one tech. b[n, t_y] is the allowed share for that tech in each node and year.
+                    b = beta_c.sel(
+                        set_conversion_technologies=i)  # (n, t_y). Slice param to one tech. b[n, t_y] is the allowed share for that tech in each node and year.
+
                     # (inflow - b * total) <= 0, only where b is defined
-                    inflow_ic = inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c)
-                    #lhs = inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c
-                    #total_c is the total inflow of this carrier across all techs
-                    #b * total_c gives the maximum allowed inflow for this tech (since inflow ≤ β·total).
-                    #lhs <= 0 is inflow_i, c ≤ β_i, c · total_c
+                    lhs = inflow_y.sel(set_conversion_technologies=i,
+                                       set_input_carriers=c) - b * total_c  # total_c is the total inflow of this carrier across all techs
+                    # b * total_c gives the maximum allowed inflow for this tech (since inflow ≤ β·total).
+                    # lhs <= 0 is inflow_i, c ≤ β_i, c · total_c
 
-                    # Nbuild ≤ 0 form only where it binds (finite b and total>0)
-                    mask = np.isfinite(b)
-                    expr = (inflow_ic - b * total_c).where(mask)
-                    #  wrap with reduced dims to avoid coord conflicts
-                    expr_blk = _as_reduced_block(expr, carrier=c, tech=i)
-                    self.constraints.add_constraint(f"constraint_max_inflow_{i}_{c}", expr_blk <= 0)
-                    #keep lhs entries only where the parameter is finite.
+                    # drop carried scalar coord to avoid xarray MergeError in dual assembly
+                    lhs = _drop_scalar_coord(lhs, "set_input_carriers")
 
-            #  MIN share: inflow_y >= β_min * total_inflow_y
-            if hasattr(self.parameters, "inflow_share_min_by_tech"):
-                beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
+                    self.constraints.add_constraint(f"constraint_max_inflow_{i}_{c}",
+                                                    lhs <= 0)  # keep lhs entries only where the parameter is finite.
 
-                # for each input carrier, check if there is any finite-and-positive (binding) min share across techs/nodes/years
-                reduce_dims_c = tuple(d for d in beta_min.dims if
-                                      d != "set_input_carriers")  # mask that tells per carrier whether there exist any finite-and-positive share values in beta_min
-                c_mask = (np.isfinite(beta_min) & (beta_min > 0)).any(
-                    dim=reduce_dims_c)  # any(dim=reduce_dims_c) collapses everything except the carrier dimension → boolean with True (min share binds somewhere) / False
-                # active carriers. Keep only carriers where c_mask is True
-                active_carriers = beta_min["set_input_carriers"].where(c_mask, drop=True).values
+        # MIN share: inflow_y >= β_min * total_inflow_y
+        if hasattr(self.parameters, "inflow_share_min_by_tech"):
+            beta_min = self.parameters.inflow_share_min_by_tech  # (i, c_in, n, y)
 
-                # for each active carrier, operate only where beta_min can bind
-                for c in active_carriers:
-                    beta_c = beta_min.sel(set_input_carriers=c)  # from (i, c_in, n, y) to (i, n, y)
-                    total_c = total_inflow_y.sel(set_input_carriers=c) #(n, y)
+            # for each input carrier, check if there is any finite-and-positive (binding) min share across techs/nodes/years
+            reduce_dims_c = tuple(d for d in beta_min.dims if d != "set_input_carriers")
+            # mask that tells per carrier whether there exist any finite-and-positive share values in beta_min
+            c_mask = (np.isfinite(beta_min) & (beta_min > 0)).any(dim=reduce_dims_c)
+            # any(dim=reduce_dims_c) collapses everything except the carrier dimension → boolean with True (min share binds somewhere) / False
 
-                    # mask that tells per technology whether there exist any finite-and-positive min share values
-                    reduce_dims_i = tuple(d for d in beta_c.dims if d != "set_conversion_technologies")
-                    i_mask = (np.isfinite(beta_c) & (beta_c > 0)).any(
-                        dim=reduce_dims_i)  # True if tech i has a binding β_min somewhere over (n, y)
+            # active carriers. Keep only carriers where c_mask is True
+            active_carriers = beta_min["set_input_carriers"].where(c_mask, drop=True).values
 
-                    # active technologies for this carrier
-                    active_techs = beta_c["set_conversion_technologies"].where(i_mask, drop=True).values
+            # for each active carrier, operate only where beta_min can bind
+            for c in active_carriers:
+                beta_c = beta_min.sel(set_input_carriers=c)  # from (i, c_in, n, y) to (i, n, y)
 
-                    # iterate only over techs that have a finite-and-positive β_min somewhere
-                    for i in active_techs:
-                        b = beta_c.sel(
-                            set_conversion_technologies=i)  # (n, y). Slice param to one tech. b[n, y] is the required min share for that tech in each node and year.
+                # mask that tells per technology whether there exist any finite-and-positive min share values
+                reduce_dims_i = tuple(d for d in beta_c.dims if d != "set_conversion_technologies")
+                i_mask = (np.isfinite(beta_c) & (beta_c > 0)).any(
+                    dim=reduce_dims_i)  # True if tech i has a binding β_min somewhere over (n, y)
 
-                        # Min-share constraint in ≤ 0 form:
-                        # inflow_i,c >= b * total_c   ⇔   -(inflow_i,c - b * total_c) <= 0
-                       # lhs = -(inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c)
-                        inflow_ic = inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c)  # (n, y)
+                # active technologies for this carrier
+                active_techs = beta_c["set_conversion_technologies"].where(i_mask, drop=True).values
 
-                        # keep lhs entries only where the parameter is valid (finite and > 0); avoids creating constraints where β_min is NaN/inf/0
-                        #lhs = lhs.where(np.isfinite(b) & (b > 0))
-                        mask = np.isfinite(b) & (b > 0)
-                        expr = (-(inflow_ic - b * total_c)).where(mask)
-                        #wrap with reduced dims to avoid coord conflicts
-                        expr_blk = _as_reduced_block(expr, carrier=c, tech=i)
-                        # add one constraint block per (tech, carrier); internally it expands over (node, year)
-                        self.constraints.add_constraint(f"constraint_min_inflow_{i}_{c}", expr_blk <= 0)
+                # total inflow for this carrier, per node/year
+                total_c = total_inflow_y.sel(set_input_carriers=c)  # (n, y)
 
+                # iterate only over techs that have a finite-and-positive β_min somewhere
+                for i in active_techs:
+                    b = beta_c.sel(
+                        set_conversion_technologies=i)  # (n, y). Slice param to one tech. b[n, y] is the required min share for that tech in each node and year.
 
+                    # Min-share constraint in ≤ 0 form:
+                    # inflow_i,c >= b * total_c ⇔ -(inflow_i,c - b * total_c) <= 0
+                    lhs = -(inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c)
+
+                    # keep lhs entries only where the parameter is valid (finite and > 0); avoids creating constraints where β_min is NaN/inf/0
+                    lhs = lhs.where(np.isfinite(b) & (b > 0))
+
+                    # drop carried scalar coord to avoid xarray MergeError in dual assembly
+                    lhs = _drop_scalar_coord(lhs, "set_input_carriers")
+
+                    # add one constraint block per (tech, carrier); internally it expands over (node, year)
+                    self.constraints.add_constraint(f"constraint_min_inflow_{i}_{c}", lhs <= 0)
 
         #  MIN: inflow_y >= beta_min * total_inflow_y -
 
