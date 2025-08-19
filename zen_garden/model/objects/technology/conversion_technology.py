@@ -688,13 +688,14 @@ class ConversionTechnologyRules(GenericRule):
 
         #  helper to avoid xarray MergeError when collecting duals and  to label blocks with consistent *reduced* dims across all constraints.
         def _as_reduced_block(arr, *, carrier=None, tech=None,
-                              carrier_dim="set_output_carriers_reduced",
+                              carrier_dim="set_input_carriers_reduced",
                               tech_dim="set_conversion_technologies_reduced"):
-            #  drop possibly conflicting scalar coords that appear after `.sel(...)`
-            arr = arr.reset_coords(("set_input_carriers", "set_output_carriers",
-                                    "set_conversion_technologies"), drop=True)
+            to_drop = [c for c in ("set_input_carriers", "set_output_carriers", "set_conversion_technologies")
+                       if c in arr.coords]  # <-- FIX
+            if to_drop:
+                arr = arr.reset_coords(to_drop, drop=True)
 
-            #  add consistent reduced dims so all blocks share the same dims
+                #  add consistent reduced dims so all blocks share the same dims
             if carrier is not None:
                 arr = arr.expand_dims({carrier_dim: [carrier]})
                 arr = arr.assign_coords({carrier_dim: [carrier]})
@@ -863,11 +864,12 @@ class ConversionTechnologyRules(GenericRule):
 
         #helper to drop scalar coord to prevent xarray merge conflicts and label with reduced dims
         def _as_reduced_block(arr, *, carrier=None, tech=None,
-                              carrier_dim="set_input_carriers_reduced",
+                              carrier_dim="set_output_carriers_reduced",
                               tech_dim="set_conversion_technologies_reduced"):
-            #  drop conflicting scalar coords after `.sel(...)`
-            arr = arr.reset_coords(("set_input_carriers", "set_output_carriers",
-                                    "set_conversion_technologies"), drop=True)
+            to_drop = [c for c in ("set_input_carriers", "set_output_carriers", "set_conversion_technologies")
+                       if c in arr.coords]
+            if to_drop:
+                arr = arr.reset_coords(to_drop, drop=True)
            # add consistent reduced dims
             if carrier is not None:
                 arr = arr.expand_dims({carrier_dim: [carrier]})
@@ -900,7 +902,6 @@ class ConversionTechnologyRules(GenericRule):
             # for each input carrier, check if there is any finite (binding) max share across techs/nodes/years
             reduce_dims_c = tuple(d for d in beta_max.dims if d != "set_input_carriers") #mask that tells per carrier whether there exist any finite share values in beta max
             c_mask = np.isfinite(beta_max).any(dim=reduce_dims_c) #is finite doesnt work  in dataarray --> np.isfinite. any(dim=reduce_dims_c) collapses everything except the carrier dimension --> boolean with true (max share is finite) or false
-            active_carriers = beta_max["set_input_carriers"].where(c_mask, drop=True).values
             # active carriers. Keep only carriers where c_mask is True
             active_carriers = beta_max["set_input_carriers"].where(c_mask, drop=True).values
 
@@ -924,8 +925,6 @@ class ConversionTechnologyRules(GenericRule):
                     # (inflow - b * total) <= 0, only where b is defined
                     inflow_ic = inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c)
                     #lhs = inflow_y.sel(set_conversion_technologies=i, set_input_carriers=c) - b * total_c
-                    mask = np.isfinite(b) & (total_c > 0)
-                    expr = (inflow_ic - b * total_c).where(mask)
                     #total_c is the total inflow of this carrier across all techs
                     #b * total_c gives the maximum allowed inflow for this tech (since inflow ≤ β·total).
                     #lhs <= 0 is inflow_i, c ≤ β_i, c · total_c
