@@ -980,7 +980,7 @@ class ConversionTechnologyRules(GenericRule):
                         #wrap with reduced dims to avoid coord conflicts
                         expr_blk = _as_reduced_block(expr, carrier=c, tech=i)
                         # add one constraint block per (tech, carrier); internally it expands over (node, year)
-                        self.constraints.add_constraint(f"constraint_min_inflow_{i}_{c}", expr_blk
+                        self.constraints.add_constraint(f"constraint_min_inflow_{i}_{c}", expr_blk <= 0)
 
 
 
