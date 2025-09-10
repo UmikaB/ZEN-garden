@@ -64,42 +64,43 @@ class ConversionTechnology(Technology):
         #UB
         # UB tech-share attributes (read as carrier,node,year,value)
         # Read against set_carriers, then rename to set_output_carriers
-        tmp_max = self.data_input.extract_input_data(
-            "demand_share_max_by_tech",
-            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
-            time_steps="set_time_steps_yearly",
-            unit_category={},
-        ).rename({"set_carriers": "set_output_carriers"})
+        #tmp_max = self.data_input.extract_input_data(
+        #    "demand_share_max_by_tech",
+        #    index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+        #    time_steps="set_time_steps_yearly",
+        #    unit_category={},
+        #).rename({"set_carriers": "set_output_carriers"})
+        #
+        #tmp_min = self.data_input.extract_input_data(
+        #    "demand_share_min_by_tech",
+        #    index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+        #    time_steps="set_time_steps_yearly",
+        #    unit_category={},
+        #).rename({"set_carriers": "set_output_carriers"})
+        #
+        #self.demand_share_max_by_tech = tmp_max
+        #self.demand_share_min_by_tech = tmp_min
 
-        tmp_min = self.data_input.extract_input_data(
-            "demand_share_min_by_tech",
-            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
-            time_steps="set_time_steps_yearly",
-            unit_category={},
-        ).rename({"set_carriers": "set_output_carriers"})
 
-        self.demand_share_max_by_tech = tmp_max
-        self.demand_share_min_by_tech = tmp_min
-       # self.demand_share_max_by_tech.attrs["units"] = "1"
-        #self.demand_share_min_by_tech.attrs["units"] = "1"
+
 
         #UB inflow share limits
-        tmp_in_max = self.data_input.extract_input_data(
-            "inflow_share_max_by_tech",
-            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
-            time_steps="set_time_steps_yearly",
-            unit_category={},
-        ).rename({"set_carriers": "set_input_carriers"})
-
-        tmp_in_min = self.data_input.extract_input_data(
-            "inflow_share_min_by_tech",
-            index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
-            time_steps="set_time_steps_yearly",
-            unit_category={},
-        ).rename({"set_carriers": "set_input_carriers"})
-
-        self.inflow_share_max_by_tech = tmp_in_max
-        self.inflow_share_min_by_tech = tmp_in_min
+       #tmp_in_max = self.data_input.extract_input_data(
+       #    "inflow_share_max_by_tech",
+       #    index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+       #    time_steps="set_time_steps_yearly",
+       #    unit_category={},
+       #).rename({"set_carriers": "set_input_carriers"})
+       #
+       #tmp_in_min = self.data_input.extract_input_data(
+       #    "inflow_share_min_by_tech",
+       #    index_sets=["set_carriers", "set_nodes", "set_time_steps_yearly"],
+       #    time_steps="set_time_steps_yearly",
+       #    unit_category={},
+       #).rename({"set_carriers": "set_input_carriers"})
+       #
+       #self.inflow_share_max_by_tech = tmp_in_max
+       #self.inflow_share_min_by_tech = tmp_in_min
 
         self.convert_to_fraction_of_capex()
 
@@ -239,36 +240,36 @@ class ConversionTechnology(Technology):
             doc="Minimum full load hours as a fraction of the total hours per planning period", calling_class=cls)
 
         # UB: Maximum fraction of final demand that a conversion tech may supply
-        optimization_setup.parameters.add_parameter(
-            name="demand_share_max_by_tech",
-            index_names=["set_conversion_technologies", "set_output_carriers", "set_nodes", "set_time_steps_yearly"],
-            doc="Max yearly share of a carrier’s final demand that a given conversion technology may cover.",
-            calling_class=cls
-        )
-
+        #ptimization_setup.parameters.add_parameter(
+        #   name="demand_share_max_by_tech",
+        #   index_names=["set_conversion_technologies", "set_output_carriers", "set_nodes", "set_time_steps_yearly"],
+        #   doc="Max yearly share of a carrier’s final demand that a given conversion technology may cover.",
+        #   calling_class=cls
+        #
+        #
         # UB: Minimum fraction of final demand that a conversion tech must supply
-        optimization_setup.parameters.add_parameter(
-            name="demand_share_min_by_tech",
-            index_names=["set_conversion_technologies", "set_output_carriers", "set_nodes", "set_time_steps_yearly"],
-            doc="Min yearly share of a carrier’s final demand that a given conversion technology must cover.",
-            calling_class=cls
-        )
-
+        #ptimization_setup.parameters.add_parameter(
+        #   name="demand_share_min_by_tech",
+        #   index_names=["set_conversion_technologies", "set_output_carriers", "set_nodes", "set_time_steps_yearly"],
+        #   doc="Min yearly share of a carrier’s final demand that a given conversion technology must cover.",
+        #   calling_class=cls
+        #
+        #
         # UB: Max fraction of an input carrier a conversion tech may consume
-        optimization_setup.parameters.add_parameter(
-            name="inflow_share_max_by_tech",
-            index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
-            doc="Max yearly share of an input carrier that a given conversion technology may consume.",
-            calling_class=cls
-        )
+        #ptimization_setup.parameters.add_parameter(
+        #   name="inflow_share_max_by_tech",
+        #   index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
+        #   doc="Max yearly share of an input carrier that a given conversion technology may consume.",
+        #   calling_class=cls
+        #
 
         # UB: Min fraction of an input carrier a conversion tech must consume
-        optimization_setup.parameters.add_parameter(
-            name="inflow_share_min_by_tech",
-            index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
-            doc="Min yearly share of an input carrier that a given conversion technology must consume.",
-            calling_class=cls
-        )
+        #optimization_setup.parameters.add_parameter(
+          #  name="inflow_share_min_by_tech",
+          #  index_names=["set_conversion_technologies", "set_input_carriers", "set_nodes", "set_time_steps_yearly"],
+           # doc="Min yearly share of an input carrier that a given conversion technology must consume.",
+           # calling_class=cls
+        #)
 
         # add params of the child classes
         for subclass in cls.__subclasses__():
