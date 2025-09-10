@@ -357,9 +357,9 @@ class ConversionTechnology(Technology):
         # minimum average annual capacity factor
         rules.constraint_minimum_full_load_hours()
         #UB
-        rules.constraint_tech_share_of_final_demand_yearly()
+       # rules.constraint_tech_share_of_final_demand_yearly()
         #UB
-        rules.constraint_tech_share_of_inflow_yearly()
+       # rules.constraint_tech_share_of_inflow_yearly()
 
         # capex
         set_pwa_capex = cls.create_custom_set(["set_conversion_technologies", "set_capex_pwa", "set_nodes", "set_time_steps_yearly"], optimization_setup)
