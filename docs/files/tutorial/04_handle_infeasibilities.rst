@@ -139,7 +139,7 @@ following:
         [natural_gas, CH, 0]:	1.0 shed_demand[natural_gas, CH, 0] = 0
         [natural_gas, DE, 0]:	1.0 shed_demand[natural_gas, DE, 0] = 0
 
-    constraint_nodal_energy_balance:
+    constraint_nodal_`energy_balance:
         [heat, CH, 0]:	1.0 flow_conversion_output[natural_gas_boiler, heat, CH, 0] + 1.0 flow_import[heat, CH, 0] - 1.0 flow_export[heat, CH, 0] + 1.0 shed_demand[heat, CH, 0] = 10
         [heat, DE, 0]:	1.0 flow_conversion_output[natural_gas_boiler, heat, DE, 0] + 1.0 flow_import[heat, DE, 0] - 1.0 flow_export[heat, DE, 0] + 1.0 shed_demand[heat, DE, 0] = 100
         [natural_gas, CH, 0]:	-1.0 flow_conversion_input[natural_gas_boiler, natural_gas, CH, 0] + 1.0 flow_transport[natural_gas_pipeline, DE-CH, 0] - 1.0 flow_transport_loss[natural_gas_pipeline, CH-DE, 0] - 1.0 flow_transport[natural_gas_pipeline, CH-DE, 0] - 1.0 flow_storage_charge[natural_gas_storage, CH, 0] + 1.0 flow_storage_discharge[natural_gas_storage, CH, 0] + 1.0 flow_import[natural_gas, CH, 0] - 1.0 flow_export[natural_gas, CH, 0] + 1.0 shed_demand[natural_gas, CH, 0] = 0

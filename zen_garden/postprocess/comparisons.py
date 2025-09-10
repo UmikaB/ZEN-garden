@@ -121,10 +121,13 @@ def get_component_diff(
     assert len(results) == 2, "Please give exactly two components"
 
     results_0, results_1 = results
+
+    scenario_0 = next(iter(results_0.solution_loader.scenarios.keys()))
+    scenario_1 = next(iter(results_1.solution_loader.scenarios.keys()))
     component_names_0 = set(
         [
             name
-            for name, component in results_0.solution_loader.components.items()
+            for name, component in results_0.solution_loader.scenarios[scenario_0].components.items()
             if component.component_type is component_type
         ]
     )
@@ -132,7 +135,7 @@ def get_component_diff(
     component_names_1 = set(
         [
             name
-            for name, component in results_1.solution_loader.components.items()
+            for name, component in results_1.solution_loader.scenarios[scenario_1].components.items()
             if component.component_type is component_type
         ]
     )
