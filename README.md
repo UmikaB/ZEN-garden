@@ -19,6 +19,7 @@ However, it is designed to be modular and flexible, and can be extended to model
 ZEN-garden is developed by the [Reliability and Risk Engineering Laboratory](https://www.rre.ethz.ch/) at ETH Zurich.
 <hr style="height: 5px; background-color: black;">
 
+
 ## Quick Start
 To get started with ZEN-garden, you can follow the instructions in the [installation guide](https://zen-garden.readthedocs.io/en/latest/files/user_guide/installation.html).
 
@@ -36,6 +37,25 @@ The `documentation/dataset_creation_tutorial.md` file contains a tutorial on how
 Additionally, example datasets are available in the `dataset_examples` folder.
 
 More in-depth manuals are available in the [discussions forum](https://github.com/ZEN-universe/ZEN-garden/discussions) of our repo.
+
+
+## Additions made in the UB ZEN-garden fork
+
+This fork adds two linear constraints in `conversion_technology.py`:
+**Demand share by technology** and **Inflow share by technology**.
+
+The *demand share by technology* constraint uses the parameters
+`demand_share_min_by_tech` and `demand_share_max_by_tech` to bound the annual share of a
+carrier’s total final demand that may be supplied by a given conversion technology,
+formulated on yearly aggregated output flows.
+
+The *inflow share by technology* constraint uses
+`inflow_share_min_by_tech` and `inflow_share_max_by_tech` to bound the annual share of a
+carrier’s total inflow that may be allocated to a given conversion technology,
+formulated on yearly aggregated input flows.
+
+Both constraints are inactive by default and can be activated selectively to represent
+scenario-specific assumptions, technology deployment limits, or policy targets.
 
 ## News
 Review recent modifications outlined in the [changelog](https://github.com/ZEN-universe/ZEN-garden/blob/main/CHANGELOG.md).
